@@ -5,6 +5,8 @@ import {
 	signOut as amplifySignOut,
 	confirmSignUp as amplifyConfirmSignUp,
 	resendSignUpCode as amplifyResendCode,
+	associateWebAuthnCredential,
+	listWebAuthnCredentials,
 	getCurrentUser,
 	fetchAuthSession,
 	type AuthUser,
@@ -43,6 +45,23 @@ export async function signIn(email: string, password: string) {
 	const result = await amplifySignIn({ username: email, password });
 	await refreshAuth();
 	return result;
+}
+
+export async function signInWithPasskey(email: string) {
+	const result = await amplifySignIn({
+		username: email,
+		options: { authFlowType: 'USER_AUTH', preferredChallenge: 'WEB_AUTHN' },
+	});
+	await refreshAuth();
+	return result;
+}
+
+export async function registerPasskey() {
+	return associateWebAuthnCredential();
+}
+
+export async function getPasskeys() {
+	return listWebAuthnCredentials();
 }
 
 export async function signUp(email: string, password: string) {
