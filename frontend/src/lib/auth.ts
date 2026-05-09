@@ -12,13 +12,7 @@ import {
 	type AuthUser,
 } from 'aws-amplify/auth';
 import { writable } from 'svelte/store';
-
-const outputModules = import.meta.glob('../../amplify_outputs.json', {
-	eager: true,
-	import: 'default',
-}) as Record<string, ResourcesConfig>;
-
-const generatedOutputs = Object.values(outputModules)[0];
+import outputs from '../../amplify_outputs.json';
 
 const envUserPoolId = import.meta.env.VITE_COGNITO_USER_POOL_ID as string | undefined;
 const envUserPoolClientId = import.meta.env.VITE_COGNITO_USER_POOL_CLIENT_ID as string | undefined;
@@ -34,7 +28,16 @@ const envConfig: ResourcesConfig | undefined =
 			}
 		: undefined;
 
-Amplify.configure(generatedOutputs ?? envConfig ?? {});
+const hasOutputs = outputs && typeof outputs === 'object' && 'auth' in outputs;
+if (hasOutputs) {
+	Amplify.configure(outputs as never, { ssr: true });
+} else if (envConfig) {
+	Amplify.configure(envConfig, { ssr: true });
+} else if (typeof window !== 'undefined') {
+	console.error(
+		'Amplify auth not configured: amplify_outputs.json missing and VITE_COGNITO_USER_POOL_ID / VITE_COGNITO_USER_POOL_CLIENT_ID not set. Run `npm run sandbox` from frontend/ to generate outputs.'
+	);
+}
 
 export interface AuthState {
 	loading: boolean;
