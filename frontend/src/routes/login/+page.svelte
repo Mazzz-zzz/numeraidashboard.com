@@ -12,6 +12,12 @@
 	let error = $state<string | null>(null);
 	let info = $state<string | null>(null);
 
+	function nextPath(): string {
+		if (typeof window === 'undefined') return '/';
+		const next = new URLSearchParams(window.location.search).get('next');
+		return next && next.startsWith('/') ? next : '/';
+	}
+
 	async function handleSubmit(e: Event) {
 		e.preventDefault();
 		error = null;
@@ -20,7 +26,7 @@
 		try {
 			if (mode === 'signin') {
 				await signIn(email, password);
-				goto('/');
+				goto(nextPath());
 			} else if (mode === 'signup') {
 				await signUp(email, password);
 				info = 'Check your email for a verification code.';
@@ -48,7 +54,7 @@
 		loading = true;
 		try {
 			await signInWithPasskey(email);
-			goto('/');
+			goto(nextPath());
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Passkey sign-in failed';
 		} finally {

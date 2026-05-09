@@ -47,30 +47,28 @@
 			</a>
 
 			<div class="nav-top-right">
-				{#if !$authState.loading}
-					{#if $authState.user}
-						<div class="user-menu">
-							<button
-								type="button"
-								class="user-btn"
-								onclick={() => (userMenuOpen = !userMenuOpen)}
-								aria-haspopup="menu"
-								aria-expanded={userMenuOpen}
-							>
-								<span class="avatar">{($authState.email ?? '?')[0].toUpperCase()}</span>
-								<span class="user-email">{$authState.email}</span>
-							</button>
-							{#if userMenuOpen}
-								<div class="user-dropdown" role="menu">
-									<button type="button" role="menuitem" onclick={handleRegisterPasskey}>Add passkey</button>
-									{#if passkeyStatus}<div class="passkey-status">{passkeyStatus}</div>{/if}
-									<button type="button" role="menuitem" onclick={handleSignOut}>Sign out</button>
-								</div>
-							{/if}
-						</div>
-					{:else}
-						<a href="/login" class="login-btn" onclick={closeMenu}>Sign in</a>
-					{/if}
+				{#if $authState.user}
+					<div class="user-menu">
+						<button
+							type="button"
+							class="user-btn"
+							onclick={() => (userMenuOpen = !userMenuOpen)}
+							aria-haspopup="menu"
+							aria-expanded={userMenuOpen}
+						>
+							<span class="avatar">{($authState.email ?? '?')[0].toUpperCase()}</span>
+							<span class="user-email">{$authState.email}</span>
+						</button>
+						{#if userMenuOpen}
+							<div class="user-dropdown" role="menu">
+								<button type="button" role="menuitem" onclick={handleRegisterPasskey}>Add passkey</button>
+								{#if passkeyStatus}<div class="passkey-status">{passkeyStatus}</div>{/if}
+								<button type="button" role="menuitem" onclick={handleSignOut}>Sign out</button>
+							</div>
+						{/if}
+					</div>
+				{:else}
+					<a href="/login" class="login-btn" onclick={closeMenu}>Sign in</a>
 				{/if}
 				<button
 					class="hamburger"
@@ -88,9 +86,12 @@
 
 		<div class="nav-body" class:open={menuOpen}>
 			<div class="nav-links">
-				<a href="/" class:active={$page.url.pathname === '/'} onclick={closeMenu}>Home</a>
-				<a href="/ml" class:active={$page.url.pathname === '/ml'} onclick={closeMenu}>ML</a>
-				<a href="/chart" class:active={$page.url.pathname === '/chart'} onclick={closeMenu}>Chart</a>
+				<a href="/" class:active={$page.url.pathname === '/'} onclick={closeMenu}>Overview</a>
+				{#if $authState.user}
+					<a href="/builder" class:active={$page.url.pathname === '/builder'} onclick={closeMenu}>Builder</a>
+					<a href="/models" class:active={$page.url.pathname === '/models'} onclick={closeMenu}>Models</a>
+					<a href="/compute" class:active={$page.url.pathname === '/compute'} onclick={closeMenu}>Compute</a>
+				{/if}
 			</div>
 		</div>
 	</nav>

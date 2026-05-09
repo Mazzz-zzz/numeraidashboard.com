@@ -12,6 +12,8 @@ node_modules/
 build/
 dist/
 *.log
+frontend/.amplify/
+frontend/amplify_outputs.json
 
 # Environment
 .env
