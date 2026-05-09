@@ -1,4 +1,4 @@
-import { Amplify } from 'aws-amplify';
+import { Amplify, type ResourcesConfig } from 'aws-amplify';
 import {
 	signIn as amplifySignIn,
 	signUp as amplifySignUp,
@@ -13,14 +13,28 @@ import {
 } from 'aws-amplify/auth';
 import { writable } from 'svelte/store';
 
-Amplify.configure({
-	Auth: {
-		Cognito: {
-			userPoolId: 'ap-southeast-2_mmskmptBA',
-			userPoolClientId: '3sujj9ijap9939v8c6casmqrg5',
-		},
-	},
-});
+const outputModules = import.meta.glob('../../amplify_outputs.json', {
+	eager: true,
+	import: 'default',
+}) as Record<string, ResourcesConfig>;
+
+const generatedOutputs = Object.values(outputModules)[0];
+
+const envUserPoolId = import.meta.env.VITE_COGNITO_USER_POOL_ID as string | undefined;
+const envUserPoolClientId = import.meta.env.VITE_COGNITO_USER_POOL_CLIENT_ID as string | undefined;
+const envConfig: ResourcesConfig | undefined =
+	envUserPoolId && envUserPoolClientId
+		? {
+				Auth: {
+					Cognito: {
+						userPoolId: envUserPoolId,
+						userPoolClientId: envUserPoolClientId,
+					},
+				},
+			}
+		: undefined;
+
+Amplify.configure(generatedOutputs ?? envConfig ?? {});
 
 export interface AuthState {
 	loading: boolean;

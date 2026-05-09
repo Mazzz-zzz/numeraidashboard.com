@@ -1,9 +1,17 @@
+import { getIdToken } from '$lib/auth';
+
 const API_URL = import.meta.env.VITE_API_URL ?? '';
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+	const token = await getIdToken();
+	const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+	if (token) {
+		headers.Authorization = `Bearer ${token}`;
+	}
+
 	const opts: RequestInit = {
 		method,
-		headers: { 'Content-Type': 'application/json' },
+		headers,
 	};
 	if (body) {
 		opts.body = JSON.stringify(body);

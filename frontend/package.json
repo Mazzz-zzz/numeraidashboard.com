@@ -5,17 +5,22 @@
   "scripts": {
     "dev": "vite dev",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "sandbox": "ampx sandbox",
+    "sandbox:once": "ampx sandbox --once"
   },
   "devDependencies": {
+    "@aws-amplify/backend": "^1.22.0",
+    "@aws-amplify/backend-cli": "^1.8.2",
     "@sveltejs/adapter-static": "^3.0.0",
     "@sveltejs/kit": "^2.0.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
     "svelte": "^5.0.0",
-    "typescript": "^5.0.0",
+    "typescript": "^5.9.3",
     "vite": "^5.4.0"
   },
   "dependencies": {
+    "@xyflow/svelte": "^1.5.2",
     "aws-amplify": "^6.17.0",
     "lightweight-charts": "^4.2.0",
     "plotly.js-dist-min": "^2.29.0"
