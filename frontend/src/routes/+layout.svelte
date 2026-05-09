@@ -1,12 +1,27 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import { page } from '$app/stores';
+	import { goto } from '$app/navigation';
 	import Toast from '$lib/components/Toast.svelte';
+	import { authState, refreshAuth, signOut } from '$lib/auth';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
+	let userMenuOpen = $state(false);
+
+	onMount(() => {
+		refreshAuth();
+	});
 
 	function closeMenu() {
 		menuOpen = false;
+		userMenuOpen = false;
+	}
+
+	async function handleSignOut() {
+		await signOut();
+		closeMenu();
+		goto('/');
 	}
 </script>
 
@@ -16,6 +31,29 @@
 			<a href="/" class="nav-brand" title="Numerai Dashboard" onclick={closeMenu}>Numerai Dashboard</a>
 
 			<div class="nav-top-right">
+				{#if !$authState.loading}
+					{#if $authState.user}
+						<div class="user-menu">
+							<button
+								type="button"
+								class="user-btn"
+								onclick={() => (userMenuOpen = !userMenuOpen)}
+								aria-haspopup="menu"
+								aria-expanded={userMenuOpen}
+							>
+								<span class="avatar">{($authState.email ?? '?')[0].toUpperCase()}</span>
+								<span class="user-email">{$authState.email}</span>
+							</button>
+							{#if userMenuOpen}
+								<div class="user-dropdown" role="menu">
+									<button type="button" role="menuitem" onclick={handleSignOut}>Sign out</button>
+								</div>
+							{/if}
+						</div>
+					{:else}
+						<a href="/login" class="login-btn" onclick={closeMenu}>Sign in</a>
+					{/if}
+				{/if}
 				<button
 					class="hamburger"
 					class:open={menuOpen}
@@ -110,6 +148,85 @@
 	}
 
 	.nav-top-right { display: flex; align-items: center; gap: 0.75rem; }
+
+	.login-btn {
+		background: var(--blue);
+		color: white;
+		text-decoration: none;
+		padding: 0.4rem 0.85rem;
+		border-radius: 6px;
+		font-size: 0.85rem;
+		font-weight: 600;
+		transition: background 0.15s;
+	}
+	.login-btn:hover { background: #0860c7; }
+
+	.user-menu { position: relative; }
+
+	.user-btn {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		background: none;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		padding: 0.25rem 0.5rem 0.25rem 0.3rem;
+		cursor: pointer;
+		font-size: 0.85rem;
+		color: var(--text);
+		transition: background 0.15s;
+	}
+	.user-btn:hover { background: var(--hover-bg); }
+
+	.avatar {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.6rem;
+		height: 1.6rem;
+		border-radius: 50%;
+		background: var(--blue);
+		color: white;
+		font-weight: 600;
+		font-size: 0.8rem;
+	}
+
+	.user-email {
+		max-width: 14rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+
+	.user-dropdown {
+		position: absolute;
+		right: 0;
+		top: calc(100% + 0.4rem);
+		background: var(--bg-card);
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		box-shadow: var(--shadow-md);
+		min-width: 9rem;
+		padding: 0.25rem;
+		z-index: 60;
+	}
+
+	.user-dropdown button {
+		width: 100%;
+		text-align: left;
+		background: none;
+		border: none;
+		padding: 0.5rem 0.6rem;
+		font-size: 0.85rem;
+		color: var(--text);
+		cursor: pointer;
+		border-radius: 4px;
+	}
+	.user-dropdown button:hover { background: var(--hover-bg); }
+
+	@media (max-width: 480px) {
+		.user-email { max-width: 6rem; }
+	}
 
 	.hamburger {
 		display: none;
