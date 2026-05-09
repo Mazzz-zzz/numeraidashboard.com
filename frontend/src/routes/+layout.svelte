@@ -28,7 +28,10 @@
 <div class="app">
 	<nav>
 		<div class="nav-top">
-			<a href="/" class="nav-brand" title="Numerai Dashboard" onclick={closeMenu}>Numerai Dashboard</a>
+			<a href="/" class="nav-brand" title="Numerai Dashboard" onclick={closeMenu}>
+				<span class="brand-mark">N</span>
+				<span>Numerai Dashboard</span>
+			</a>
 
 			<div class="nav-top-right">
 				{#if !$authState.loading}
@@ -90,76 +93,107 @@
 
 <style>
 	:global(:root) {
-		--bg-page: #f6f8fa;
+		--bg-page: #fbfaf7;
 		--bg-card: #ffffff;
-		--bg-input: #f6f8fa;
+		--bg-input: #f7f6f2;
 		--bg-nav: #ffffff;
-		--border: #d1d9e0;
-		--border-light: #e1e4e8;
-		--text: #1f2328;
-		--text-secondary: #656d76;
-		--text-muted: #8b949e;
-		--blue: #0969da;
+		--border: #d9d4ca;
+		--border-light: #ece7dd;
+		--border-strong: #171717;
+		--text: #171717;
+		--text-secondary: #5d5a52;
+		--text-muted: #8b8579;
+		--blue: #171717;
 		--green: #1a7f37;
 		--red: #cf222e;
-		--orange: #bc4c00;
-		--purple: #8250df;
-		--yellow: #9a6700;
-		--hover-bg: #f0f2f5;
-		--badge-blue: rgba(9, 105, 218, 0.08);
-		--badge-green: rgba(26, 127, 55, 0.08);
-		--badge-orange: rgba(188, 76, 0, 0.08);
-		--badge-red: rgba(207, 34, 46, 0.08);
+		--orange: #b45309;
+		--purple: #6d28d9;
+		--yellow: #946200;
+		--hover-bg: #f5f2eb;
+		--badge-blue: rgba(23, 23, 23, 0.06);
+		--badge-green: rgba(26, 127, 55, 0.1);
+		--badge-orange: rgba(180, 83, 9, 0.1);
+		--badge-red: rgba(207, 34, 46, 0.09);
 		--badge-muted: rgba(101, 109, 118, 0.08);
-		--shadow-sm: 0 1px 2px rgba(0,0,0,0.06);
-		--shadow-md: 0 4px 12px rgba(0,0,0,0.08);
+		--shadow-sm: 0 1px 0 rgba(23, 23, 23, 0.04);
+		--shadow-md: 0 12px 32px rgba(23, 23, 23, 0.08);
+		--shadow-lg: 0 24px 70px rgba(23, 23, 23, 0.12);
+		--font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
 	}
 
 	:global(body) {
 		margin: 0;
 		font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-		background: var(--bg-page);
+		background:
+			linear-gradient(rgba(23, 23, 23, 0.035) 1px, transparent 1px),
+			linear-gradient(90deg, rgba(23, 23, 23, 0.035) 1px, transparent 1px),
+			var(--bg-page);
+		background-size: 44px 44px;
 		color: var(--text);
+		text-rendering: optimizeLegibility;
 	}
 
 	.app { min-height: 100vh; }
 
 	nav {
-		background: var(--bg-nav);
+		background: rgba(255, 255, 255, 0.92);
+		background: color-mix(in srgb, var(--bg-nav) 92%, transparent);
 		border-bottom: 1px solid var(--border);
-		box-shadow: var(--shadow-sm);
 		position: sticky;
 		top: 0;
 		z-index: 50;
+		backdrop-filter: blur(18px);
 	}
 
 	.nav-top {
 		display: flex;
 		align-items: center;
 		justify-content: space-between;
-		padding: 0.75rem 1.5rem;
+		max-width: 1280px;
+		margin: 0 auto;
+		padding: 0.75rem 1.5rem 0.45rem;
 	}
 
 	.nav-brand {
-		font-size: 1.25rem;
-		font-weight: 700;
-		color: var(--blue);
+		display: inline-flex;
+		align-items: center;
+		gap: 0.6rem;
+		font-size: 0.95rem;
+		font-weight: 760;
+		color: var(--text);
 		text-decoration: none;
+		letter-spacing: 0;
+	}
+
+	.brand-mark {
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		width: 1.85rem;
+		height: 1.85rem;
+		border: 1px solid var(--text);
+		border-radius: 6px;
+		background: var(--text);
+		color: #fff;
+		font-family: var(--font-mono);
+		font-size: 0.8rem;
+		font-weight: 800;
 	}
 
 	.nav-top-right { display: flex; align-items: center; gap: 0.75rem; }
 
 	.login-btn {
-		background: var(--blue);
+		background: var(--text);
 		color: white;
 		text-decoration: none;
-		padding: 0.4rem 0.85rem;
+		padding: 0.45rem 0.85rem;
 		border-radius: 6px;
-		font-size: 0.85rem;
-		font-weight: 600;
+		border: 1px solid var(--text);
+		font-size: 0.8rem;
+		font-weight: 700;
 		transition: background 0.15s;
 	}
-	.login-btn:hover { background: #0860c7; }
+	.login-btn:hover { background: #303030; }
 
 	.user-menu { position: relative; }
 
@@ -170,7 +204,7 @@
 		background: none;
 		border: 1px solid var(--border);
 		border-radius: 6px;
-		padding: 0.25rem 0.5rem 0.25rem 0.3rem;
+		padding: 0.25rem 0.55rem 0.25rem 0.3rem;
 		cursor: pointer;
 		font-size: 0.85rem;
 		color: var(--text);
@@ -185,7 +219,7 @@
 		width: 1.6rem;
 		height: 1.6rem;
 		border-radius: 50%;
-		background: var(--blue);
+		background: var(--text);
 		color: white;
 		font-weight: 600;
 		font-size: 0.8rem;
@@ -204,7 +238,7 @@
 		top: calc(100% + 0.4rem);
 		background: var(--bg-card);
 		border: 1px solid var(--border);
-		border-radius: 6px;
+		border-radius: 8px;
 		box-shadow: var(--shadow-md);
 		min-width: 9rem;
 		padding: 0.25rem;
@@ -263,6 +297,8 @@
 		display: flex;
 		align-items: center;
 		gap: 1.5rem;
+		max-width: 1280px;
+		margin: 0 auto;
 		padding: 0 1.5rem 0.75rem;
 	}
 
@@ -271,21 +307,23 @@
 	.nav-links a {
 		color: var(--text-secondary);
 		text-decoration: none;
-		padding: 0.35rem 0.6rem;
+		padding: 0.38rem 0.58rem;
 		border-radius: 6px;
 		transition: color 0.15s, background 0.15s;
-		font-size: 0.875rem;
-		font-weight: 500;
+		font-size: 0.78rem;
+		font-weight: 720;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
 		white-space: nowrap;
 	}
 
 	.nav-links a:hover { color: var(--text); background: var(--hover-bg); }
-	.nav-links a.active { color: var(--blue); background: var(--badge-blue); }
+	.nav-links a.active { color: var(--text); background: var(--badge-blue); }
 
 	.nav-overlay { display: none; }
 
 	main {
-		max-width: 1200px;
+		max-width: 1280px;
 		margin: 0 auto;
 		padding: 1.5rem;
 	}
@@ -318,7 +356,15 @@
 	}
 
 	@media (max-width: 480px) {
-		.nav-brand { font-size: 1.1rem; }
+		.nav-brand {
+			max-width: 10rem;
+			font-size: 0.9rem;
+		}
+		.nav-brand span:last-child {
+			overflow: hidden;
+			text-overflow: ellipsis;
+			white-space: nowrap;
+		}
 		main { padding: 0.75rem; }
 	}
 </style>
