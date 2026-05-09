@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { signIn, signUp, confirmSignUp, resendCode } from '$lib/auth';
+	import { signIn, signInWithPasskey, signUp, confirmSignUp, resendCode } from '$lib/auth';
 
 	type Mode = 'signin' | 'signup' | 'confirm';
 
@@ -33,6 +33,24 @@
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Something went wrong';
+		} finally {
+			loading = false;
+		}
+	}
+
+	async function handlePasskey() {
+		error = null;
+		info = null;
+		if (!email) {
+			error = 'Enter your email first.';
+			return;
+		}
+		loading = true;
+		try {
+			await signInWithPasskey(email);
+			goto('/');
+		} catch (e) {
+			error = e instanceof Error ? e.message : 'Passkey sign-in failed';
 		} finally {
 			loading = false;
 		}
@@ -96,6 +114,22 @@
 				{:else}Confirm
 				{/if}
 			</button>
+
+			{#if mode === 'signin'}
+				<div class="divider"><span>or</span></div>
+				<button
+					type="button"
+					class="passkey"
+					onclick={handlePasskey}
+					disabled={loading}
+					title="Sign in with TouchID, FaceID, or a hardware key"
+				>
+					<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+						<path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4"></path>
+					</svg>
+					Sign in with passkey
+				</button>
+			{/if}
 		</form>
 
 		<div class="switch">
@@ -183,6 +217,38 @@
 
 	.primary:disabled { opacity: 0.6; cursor: not-allowed; }
 	.primary:hover:not(:disabled) { background: #0860c7; }
+
+	.divider {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		color: var(--text-muted);
+		font-size: 0.75rem;
+		margin: 0.25rem 0;
+	}
+	.divider::before, .divider::after {
+		content: '';
+		flex: 1;
+		height: 1px;
+		background: var(--border-light);
+	}
+
+	.passkey {
+		display: flex;
+		align-items: center;
+		justify-content: center;
+		gap: 0.5rem;
+		background: var(--bg-input);
+		color: var(--text);
+		border: 1px solid var(--border);
+		padding: 0.55rem 1rem;
+		border-radius: 6px;
+		font-size: 0.9rem;
+		font-weight: 500;
+		cursor: pointer;
+	}
+	.passkey:disabled { opacity: 0.6; cursor: not-allowed; }
+	.passkey:hover:not(:disabled) { background: var(--hover-bg); border-color: var(--blue); }
 
 	.error {
 		color: var(--red);

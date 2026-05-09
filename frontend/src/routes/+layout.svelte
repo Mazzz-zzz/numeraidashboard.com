@@ -3,11 +3,12 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import Toast from '$lib/components/Toast.svelte';
-	import { authState, refreshAuth, signOut } from '$lib/auth';
+	import { authState, refreshAuth, registerPasskey, signOut } from '$lib/auth';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
 	let userMenuOpen = $state(false);
+	let passkeyStatus = $state<string | null>(null);
 
 	onMount(() => {
 		refreshAuth();
@@ -22,6 +23,18 @@
 		await signOut();
 		closeMenu();
 		goto('/');
+	}
+
+	async function handleRegisterPasskey() {
+		passkeyStatus = 'Registering…';
+		try {
+			await registerPasskey();
+			passkeyStatus = 'Passkey added';
+			setTimeout(() => (passkeyStatus = null), 3000);
+		} catch (e) {
+			passkeyStatus = e instanceof Error ? e.message : 'Failed to add passkey';
+			setTimeout(() => (passkeyStatus = null), 5000);
+		}
 	}
 </script>
 
@@ -49,6 +62,8 @@
 							</button>
 							{#if userMenuOpen}
 								<div class="user-dropdown" role="menu">
+									<button type="button" role="menuitem" onclick={handleRegisterPasskey}>Add passkey</button>
+									{#if passkeyStatus}<div class="passkey-status">{passkeyStatus}</div>{/if}
 									<button type="button" role="menuitem" onclick={handleSignOut}>Sign out</button>
 								</div>
 							{/if}
@@ -257,6 +272,13 @@
 		border-radius: 4px;
 	}
 	.user-dropdown button:hover { background: var(--hover-bg); }
+
+	.passkey-status {
+		font-size: 0.75rem;
+		color: var(--text-secondary);
+		padding: 0.3rem 0.6rem;
+		border-bottom: 1px solid var(--border-light);
+	}
 
 	@media (max-width: 480px) {
 		.user-email { max-width: 6rem; }
