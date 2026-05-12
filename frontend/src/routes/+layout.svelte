@@ -76,6 +76,7 @@
 				{#if $authState.user}
 					<a href="/builder" class:active={$page.url.pathname === '/builder'} onclick={closeMenu}>Builder</a>
 					<a href="/models" class:active={$page.url.pathname === '/models'} onclick={closeMenu}>Models</a>
+					<a href="/evolution" class:active={$page.url.pathname === '/evolution'} onclick={closeMenu}>Evolution</a>
 					<a href="/compute" class:active={$page.url.pathname === '/compute'} onclick={closeMenu}>Compute</a>
 				{/if}
 			</div>
@@ -86,7 +87,7 @@
 		<button class="nav-overlay" onclick={closeMenu} aria-label="Close menu" tabindex="-1"></button>
 	{/if}
 
-	<main class:fullbleed={$page.url.pathname.startsWith('/settings')}>
+	<main class:fullbleed={$page.url.pathname.startsWith('/settings') || $page.url.pathname.startsWith('/evolution')}>
 		{@render children()}
 	</main>
 </div>

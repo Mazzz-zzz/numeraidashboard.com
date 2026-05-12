@@ -71,6 +71,8 @@ const schema = a.schema({
 			pipelineId: a.id(),
 			branchId: a.id(),
 			runId: a.id(),
+			parentModelId: a.id(),
+			changeSummary: a.string(),
 			numeraiModelId: a.string(),
 			liveCorr: a.float(),
 			liveMmc: a.float(),
