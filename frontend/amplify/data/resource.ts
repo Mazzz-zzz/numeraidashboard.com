@@ -86,11 +86,21 @@ const schema = a.schema({
 			name: a.string().required(),
 			providerType: a.enum(['prime_intellect', 'modal', 'sagemaker', 'local', 'custom']),
 			status: a.enum(['available', 'planned', 'disabled']),
-			credentialsRef: a.string(),
+			credentialsJson: a.json(),
 			monthlyBudgetUsd: a.float(),
 			defaultRunCapUsd: a.float(),
 			maxConcurrentJobs: a.integer(),
 			notes: a.string(),
+		})
+		.authorization((allow) => [allow.owner()]),
+
+	NumeraiAccount: a
+		.model({
+			label: a.string(),
+			publicId: a.string().required(),
+			secretKey: a.string().required(),
+			verifiedAt: a.datetime(),
+			lastVerifyError: a.string(),
 		})
 		.authorization((allow) => [allow.owner()]),
 

@@ -6,6 +6,7 @@ import {
 	confirmSignUp as amplifyConfirmSignUp,
 	resendSignUpCode as amplifyResendCode,
 	associateWebAuthnCredential,
+	deleteWebAuthnCredential,
 	listWebAuthnCredentials,
 	getCurrentUser,
 	fetchAuthSession,
@@ -79,6 +80,10 @@ export async function registerPasskey() {
 
 export async function getPasskeys() {
 	return listWebAuthnCredentials();
+}
+
+export async function deletePasskey(credentialId: string) {
+	return deleteWebAuthnCredential({ credentialId });
 }
 
 export async function signUp(email: string, password: string) {
