@@ -3,12 +3,11 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import Toast from '$lib/components/Toast.svelte';
-	import { authState, refreshAuth, registerPasskey, signOut } from '$lib/auth';
+	import { authState, refreshAuth, signOut } from '$lib/auth';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
 	let userMenuOpen = $state(false);
-	let passkeyStatus = $state<string | null>(null);
 
 	onMount(() => {
 		refreshAuth();
@@ -23,18 +22,6 @@
 		await signOut();
 		closeMenu();
 		goto('/');
-	}
-
-	async function handleRegisterPasskey() {
-		passkeyStatus = 'Registering…';
-		try {
-			await registerPasskey();
-			passkeyStatus = 'Passkey added';
-			setTimeout(() => (passkeyStatus = null), 3000);
-		} catch (e) {
-			passkeyStatus = e instanceof Error ? e.message : 'Failed to add passkey';
-			setTimeout(() => (passkeyStatus = null), 5000);
-		}
 	}
 </script>
 
@@ -61,8 +48,7 @@
 						</button>
 						{#if userMenuOpen}
 							<div class="user-dropdown" role="menu">
-								<button type="button" role="menuitem" onclick={handleRegisterPasskey}>Add passkey</button>
-								{#if passkeyStatus}<div class="passkey-status">{passkeyStatus}</div>{/if}
+								<a href="/settings" role="menuitem" onclick={closeMenu}>Settings</a>
 								<button type="button" role="menuitem" onclick={handleSignOut}>Sign out</button>
 							</div>
 						{/if}
@@ -100,7 +86,7 @@
 		<button class="nav-overlay" onclick={closeMenu} aria-label="Close menu" tabindex="-1"></button>
 	{/if}
 
-	<main>
+	<main class:fullbleed={$page.url.pathname.startsWith('/settings')}>
 		{@render children()}
 	</main>
 </div>
@@ -135,6 +121,13 @@
 		--shadow-md: 0 12px 32px rgba(23, 23, 23, 0.08);
 		--shadow-lg: 0 24px 70px rgba(23, 23, 23, 0.12);
 		--font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+		--nav-height: 88px;
+	}
+
+	@media (max-width: 768px) {
+		:global(:root) {
+			--nav-height: 56px;
+		}
 	}
 
 	:global(body) {
@@ -261,7 +254,9 @@
 		z-index: 60;
 	}
 
-	.user-dropdown button {
+	.user-dropdown button,
+	.user-dropdown a {
+		display: block;
 		width: 100%;
 		text-align: left;
 		background: none;
@@ -269,17 +264,13 @@
 		padding: 0.5rem 0.6rem;
 		font-size: 0.85rem;
 		color: var(--text);
+		text-decoration: none;
 		cursor: pointer;
 		border-radius: 4px;
+		box-sizing: border-box;
 	}
-	.user-dropdown button:hover { background: var(--hover-bg); }
-
-	.passkey-status {
-		font-size: 0.75rem;
-		color: var(--text-secondary);
-		padding: 0.3rem 0.6rem;
-		border-bottom: 1px solid var(--border-light);
-	}
+	.user-dropdown button:hover,
+	.user-dropdown a:hover { background: var(--hover-bg); }
 
 	@media (max-width: 480px) {
 		.user-email { max-width: 6rem; }
@@ -349,6 +340,12 @@
 		max-width: 1280px;
 		margin: 0 auto;
 		padding: 1.5rem;
+	}
+
+	main.fullbleed {
+		max-width: none;
+		margin: 0;
+		padding: 0;
 	}
 
 	@media (max-width: 768px) {
