@@ -29,9 +29,19 @@
 	<nav>
 		<div class="nav-top">
 			<a href="/" class="nav-brand" title="Numerai Dashboard" onclick={closeMenu}>
-				<span class="brand-mark">N</span>
+				<img class="brand-mark" src="/favicon.svg" alt="" width="32" height="32" />
 				<span>Numerai Dashboard</span>
 			</a>
+
+			<div class="nav-links" class:open={menuOpen}>
+				<a href="/" class:active={$page.url.pathname === '/'} onclick={closeMenu}>Overview</a>
+				{#if $authState.user}
+					<a href="/builder" class:active={$page.url.pathname === '/builder'} onclick={closeMenu}>Builder</a>
+					<a href="/models" class:active={$page.url.pathname === '/models'} onclick={closeMenu}>Models</a>
+					<a href="/evolution" class:active={$page.url.pathname === '/evolution'} onclick={closeMenu}>Evolution</a>
+					<a href="/compute" class:active={$page.url.pathname === '/compute'} onclick={closeMenu}>Compute</a>
+				{/if}
+			</div>
 
 			<div class="nav-top-right">
 				{#if $authState.user}
@@ -67,18 +77,6 @@
 					<span class="hamburger-line"></span>
 					<span class="hamburger-line"></span>
 				</button>
-			</div>
-		</div>
-
-		<div class="nav-body" class:open={menuOpen}>
-			<div class="nav-links">
-				<a href="/" class:active={$page.url.pathname === '/'} onclick={closeMenu}>Overview</a>
-				{#if $authState.user}
-					<a href="/builder" class:active={$page.url.pathname === '/builder'} onclick={closeMenu}>Builder</a>
-					<a href="/models" class:active={$page.url.pathname === '/models'} onclick={closeMenu}>Models</a>
-					<a href="/evolution" class:active={$page.url.pathname === '/evolution'} onclick={closeMenu}>Evolution</a>
-					<a href="/compute" class:active={$page.url.pathname === '/compute'} onclick={closeMenu}>Compute</a>
-				{/if}
 			</div>
 		</div>
 	</nav>
@@ -122,12 +120,12 @@
 		--shadow-md: 0 12px 32px rgba(23, 23, 23, 0.08);
 		--shadow-lg: 0 24px 70px rgba(23, 23, 23, 0.12);
 		--font-mono: 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
-		--nav-height: 88px;
+		--nav-height: 64px;
 	}
 
-	@media (max-width: 768px) {
+	@media (max-width: 900px) {
 		:global(:root) {
-			--nav-height: 56px;
+			--nav-height: 60px;
 		}
 	}
 
@@ -158,36 +156,37 @@
 	.nav-top {
 		display: flex;
 		align-items: center;
-		justify-content: space-between;
+		gap: 1.25rem;
 		max-width: 1280px;
 		margin: 0 auto;
-		padding: 0.75rem 1.5rem 0.45rem;
+		padding: 0.6rem 1.5rem;
 	}
+	.nav-top-right { margin-left: auto; }
 
 	.nav-brand {
 		display: inline-flex;
 		align-items: center;
-		gap: 0.6rem;
-		font-size: 0.95rem;
+		gap: 0.55rem;
+		margin-left: -0.4rem;
+		font-size: 0.98rem;
 		font-weight: 760;
 		color: var(--text);
 		text-decoration: none;
 		letter-spacing: 0;
+		white-space: nowrap;
 	}
 
 	.brand-mark {
-		display: inline-flex;
-		align-items: center;
-		justify-content: center;
-		width: 1.85rem;
-		height: 1.85rem;
-		border: 1px solid var(--text);
+		display: block;
+		width: 2.7rem;
+		height: 2.7rem;
 		border-radius: 6px;
-		background: var(--text);
-		color: #fff;
-		font-family: var(--font-mono);
-		font-size: 0.8rem;
-		font-weight: 800;
+		object-fit: contain;
+		flex-shrink: 0;
+		transition: transform 0.15s ease;
+	}
+	.nav-brand:hover .brand-mark {
+		transform: rotate(-6deg) scale(1.04);
 	}
 
 	.nav-top-right { display: flex; align-items: center; gap: 0.75rem; }
@@ -308,16 +307,11 @@
 	.hamburger.open .hamburger-line:nth-child(2) { opacity: 0; }
 	.hamburger.open .hamburger-line:nth-child(3) { transform: translateY(-6px) rotate(-45deg); }
 
-	.nav-body {
+	.nav-links {
 		display: flex;
 		align-items: center;
-		gap: 1.5rem;
-		max-width: 1280px;
-		margin: 0 auto;
-		padding: 0 1.5rem 0.75rem;
+		gap: 0.15rem;
 	}
-
-	.nav-links { display: flex; gap: 0.25rem; }
 
 	.nav-links a {
 		color: var(--text-secondary);
@@ -349,19 +343,22 @@
 		padding: 0;
 	}
 
-	@media (max-width: 768px) {
-		.nav-top { padding: 0.6rem 1rem; }
+	@media (max-width: 900px) {
+		.nav-top { padding: 0.5rem 1rem; flex-wrap: wrap; }
 		.hamburger { display: flex; }
-		.nav-body {
+		.nav-links {
 			display: none;
+			order: 3;
+			width: 100%;
+			flex-basis: 100%;
 			flex-direction: column;
 			align-items: stretch;
 			gap: 0;
-			padding: 0;
+			margin: 0 -1rem;
+			padding: 0.4rem 0;
 			border-top: 1px solid var(--border-light);
 		}
-		.nav-body.open { display: flex; }
-		.nav-links { flex-direction: column; gap: 0; padding: 0.5rem 0; }
+		.nav-links.open { display: flex; }
 		.nav-links a { padding: 0.75rem 1.25rem; border-radius: 0; font-size: 0.9rem; }
 		.nav-links a.active { border-radius: 0; }
 		.nav-overlay {
