@@ -352,16 +352,24 @@
 	}
 
 	async function verifyNumerai() {
-		if (!numeraiAccount?.id) return;
+		if (!numeraiAccount?.id || !numeraiAccount.publicId || !numeraiAccount.secretKey) {
+			addToast('Save credentials before verifying', 'error');
+			return;
+		}
 		verifying = true;
 		try {
-			const { data, errors } = await dataClient().mutations.verifyNumeraiAccount({ id: numeraiAccount.id });
+			const { data, errors } = await dataClient().mutations.verifyNumeraiAccount({
+				publicId: numeraiAccount.publicId,
+				secretKey: numeraiAccount.secretKey
+			});
 			if (errors?.length) throw new Error(errors[0].message);
-			if (data?.ok) {
-				addToast('Numerai credentials verified', 'success');
-			} else {
-				addToast(`Verify failed: ${data?.error ?? 'unknown error'}`, 'error');
-			}
+			const ok = !!data?.ok;
+			await dataClient().models.NumeraiAccount.update({
+				id: numeraiAccount.id,
+				verifiedAt: ok ? data?.verifiedAt ?? new Date().toISOString() : null,
+				lastVerifyError: ok ? null : data?.error ?? 'unknown error'
+			});
+			addToast(ok ? 'Numerai credentials verified' : `Verify failed: ${data?.error ?? 'unknown error'}`, ok ? 'success' : 'error');
 			await loadNumerai();
 		} catch (e) {
 			addToast(asMessage(e, 'Verification failed'), 'error');
@@ -372,15 +380,28 @@
 
 	async function verifyProvider() {
 		if (drawer.kind !== 'provider') return;
+		const id = drawer.id;
+		const p = providers.find((pp) => pp.id === id);
+		if (!p) return;
 		verifying = true;
 		try {
-			const { data, errors } = await dataClient().mutations.verifyComputeProvider({ id: drawer.id });
+			const { data, errors } = await dataClient().mutations.verifyComputeProvider({
+				providerType: p.providerType ?? 'custom',
+				apiKey: p.apiKey ?? null,
+				apiSecret: p.apiSecret ?? null,
+				workspaceId: p.workspaceId ?? null,
+				awsRoleArn: p.awsRoleArn ?? null,
+				awsRegion: p.awsRegion ?? null,
+				baseUrl: p.baseUrl ?? null
+			});
 			if (errors?.length) throw new Error(errors[0].message);
-			if (data?.ok) {
-				addToast('Provider credentials verified', 'success');
-			} else {
-				addToast(`Verify failed: ${data?.error ?? 'unknown error'}`, 'error');
-			}
+			const ok = !!data?.ok;
+			await dataClient().models.ComputeProvider.update({
+				id,
+				verifiedAt: ok ? data?.verifiedAt ?? new Date().toISOString() : null,
+				lastVerifyError: ok ? null : data?.error ?? 'unknown error'
+			});
+			addToast(ok ? 'Provider credentials verified' : `Verify failed: ${data?.error ?? 'unknown error'}`, ok ? 'success' : 'error');
 			await loadProviders();
 		} catch (e) {
 			addToast(asMessage(e, 'Verification failed'), 'error');
