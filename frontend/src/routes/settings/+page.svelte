@@ -556,10 +556,12 @@
 									{busy ? 'Saving…' : numeraiAccount ? 'Save changes' : 'Link account'}
 								</button>
 								{#if numeraiAccount}
-									<button type="button" onclick={verifyNumerai} disabled={busy || verifying}>
-										{verifying ? 'Verifying…' : 'Verify'}
-									</button>
-									<button type="button" class="danger" onclick={removeNumerai} disabled={busy}>Remove</button>
+									<div class="secondary-row">
+										<button type="button" onclick={verifyNumerai} disabled={busy || verifying}>
+											{verifying ? 'Verifying…' : 'Verify'}
+										</button>
+										<button type="button" class="danger" onclick={removeNumerai} disabled={busy}>Remove</button>
+									</div>
 								{/if}
 							</div>
 						</form>
@@ -679,10 +681,12 @@
 									{busy ? 'Saving…' : drawer.kind === 'provider' ? 'Save changes' : 'Add provider'}
 								</button>
 								{#if drawer.kind === 'provider'}
-									<button type="button" onclick={verifyProvider} disabled={busy || verifying}>
-										{verifying ? 'Verifying…' : 'Verify'}
-									</button>
-									<button type="button" class="danger" onclick={removeProvider} disabled={busy}>Remove</button>
+									<div class="secondary-row">
+										<button type="button" onclick={verifyProvider} disabled={busy || verifying}>
+											{verifying ? 'Verifying…' : 'Verify'}
+										</button>
+										<button type="button" class="danger" onclick={removeProvider} disabled={busy}>Remove</button>
+									</div>
 								{/if}
 							</div>
 						</form>
@@ -735,10 +739,10 @@
 	.drawer {
 		display: grid;
 		grid-template-rows: auto 1fr;
-		gap: 1rem;
-		padding: 1rem 1.1rem 1.2rem;
+		gap: 1.1rem;
+		padding: 1.25rem 1.25rem 1.4rem;
 		background: var(--bg-card);
-		border-left: 1px solid var(--text);
+		border-left: 1.5px solid var(--text);
 		overflow-y: auto;
 	}
 
@@ -747,18 +751,39 @@
 		justify-content: space-between;
 		align-items: flex-start;
 		gap: 0.5rem;
+		padding-bottom: 0.9rem;
+		border-bottom: 1.5px solid var(--text);
 	}
 	.drawer-head .eyebrow {
 		font-family: var(--font-mono);
-		font-size: 0.65rem;
+		font-size: 0.66rem;
 		font-weight: 800;
 		letter-spacing: 0.14em;
 		text-transform: uppercase;
 		color: var(--text-muted);
 		display: block;
-		margin-bottom: 0.15rem;
+		margin-bottom: 0.3rem;
 	}
-	.drawer-head h2 { margin: 0; font-size: 1.05rem; }
+	.drawer-head h2 {
+		margin: 0;
+		font-size: 1.15rem;
+		font-weight: 700;
+		letter-spacing: -0.005em;
+	}
+	.drawer-head .ghost {
+		margin-top: -0.25rem;
+	}
+
+	.section-eyebrow {
+		display: block;
+		margin: 0.15rem 0 -0.1rem;
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		font-weight: 800;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
 
 	button {
 		font: inherit;
@@ -813,61 +838,112 @@
 	.kv {
 		display: grid;
 		grid-template-columns: max-content 1fr;
-		gap: 0.35rem 0.85rem;
-		margin: 0 0 0.4rem;
-		padding-bottom: 0.7rem;
-		border-bottom: 1px solid var(--border-light);
+		gap: 0.5rem 0.85rem;
+		margin: 0;
+		padding: 0.8rem 0.85rem;
+		background: var(--bg-page);
+		border: 1.5px solid var(--text);
+		border-radius: 4px;
+		box-shadow: 3px 3px 0 var(--text);
 	}
 	.kv dt {
 		color: var(--text-muted);
 		font-family: var(--font-mono);
-		font-size: 0.65rem;
+		font-size: 0.62rem;
 		font-weight: 800;
-		letter-spacing: 0.1em;
+		letter-spacing: 0.12em;
 		text-transform: uppercase;
 		align-self: center;
 	}
 	.kv dd { margin: 0; font-size: 0.85rem; }
 
-	.form { display: grid; gap: 0.7rem; }
+	.form { display: grid; gap: 0.85rem; }
 	.form label {
 		display: grid;
-		gap: 0.3rem;
+		gap: 0.35rem;
 		font-size: 0.85rem;
 	}
 	.form label > span {
-		color: var(--text-secondary);
-		font-size: 0.74rem;
-		font-weight: 700;
+		font-family: var(--font-mono);
+		color: var(--text-muted);
+		font-size: 0.62rem;
+		font-weight: 800;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+		padding-left: 0.75rem;
 	}
 	.form input,
 	.form select,
 	.form textarea {
 		font: inherit;
-		font-size: 0.88rem;
-		padding: 0.5rem 0.65rem;
-		border: 1px solid var(--border);
+		font-size: 0.9rem;
+		padding: 0.6rem 0.75rem;
+		border: 1.5px solid var(--text);
 		border-radius: 4px;
-		background: var(--bg-input);
+		background: var(--bg-page);
 		color: var(--text);
+		transition: box-shadow 0.12s ease, transform 0.12s ease;
+	}
+	.form input:hover,
+	.form select:hover,
+	.form textarea:hover {
+		background: var(--bg-card);
+	}
+	.form input:focus,
+	.form select:focus,
+	.form textarea:focus {
+		outline: none;
+		box-shadow: 3px 3px 0 var(--text);
+		transform: translate(-1px, -1px);
+		background: var(--bg-card);
+	}
+	.form input::placeholder,
+	.form textarea::placeholder {
+		color: var(--text-muted);
+		opacity: 0.7;
 	}
 	.form textarea { font-family: var(--font-mono); resize: vertical; }
-	.form-actions { display: flex; gap: 0.5rem; margin-top: 0.3rem; }
 
-	.rows { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.4rem; }
+	.form-actions {
+		display: grid;
+		gap: 0.5rem;
+		margin-top: 0.6rem;
+		padding-top: 0.9rem;
+		border-top: 1.5px solid var(--text);
+	}
+	.form-actions .primary {
+		width: 100%;
+		padding: 0.7rem 0.85rem;
+		font-size: 0.88rem;
+		box-shadow: 3px 3px 0 var(--text);
+		transition: transform 0.12s ease, box-shadow 0.12s ease;
+	}
+	.form-actions .primary:hover:not(:disabled) {
+		transform: translate(-1px, -1px);
+		box-shadow: 4px 4px 0 var(--text);
+	}
+	.form-actions .secondary-row {
+		display: flex;
+		gap: 0.5rem;
+	}
+	.form-actions .secondary-row > button {
+		flex: 1;
+	}
+
+	.rows { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.45rem; }
 	.row {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
 		gap: 0.5rem;
-		padding: 0.55rem 0.7rem;
-		background: var(--bg-input);
-		border: 1px solid var(--border-light);
+		padding: 0.65rem 0.8rem;
+		background: var(--bg-page);
+		border: 1.5px solid var(--text);
 		border-radius: 4px;
 	}
-	.row > div { display: grid; gap: 0.1rem; }
-	.row strong { font-size: 0.85rem; }
-	.row .muted { font-size: 0.74rem; }
+	.row > div { display: grid; gap: 0.15rem; }
+	.row strong { font-size: 0.88rem; }
+	.row .muted { font-size: 0.72rem; font-family: var(--font-mono); }
 
 	@media (max-width: 880px) {
 		.flow-shell {

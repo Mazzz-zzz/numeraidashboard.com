@@ -83,6 +83,19 @@
 			{/if}
 		</h1>
 
+		<aside class="preview-note" aria-label="Research preview notice">
+			<header class="preview-head">
+				<span class="preview-eyebrow">
+					<span class="preview-dot" aria-hidden="true"></span>
+					Research preview
+				</span>
+				<span class="preview-build">v0 · live</span>
+			</header>
+			<p class="preview-body">
+				Built in the open and shipped constantly. Schema changes, half-wired routes, and rough edges are expected.
+			</p>
+		</aside>
+
 		<form onsubmit={handleSubmit}>
 			<label>
 				<span>Email</span>
@@ -175,9 +188,67 @@
 	}
 
 	h1 {
-		margin: 0 0 1.25rem;
+		margin: 0 0 0.6rem;
 		font-size: 1.25rem;
 		font-weight: 600;
+	}
+
+	.preview-note {
+		display: grid;
+		gap: 0.45rem;
+		margin: 0 0 1.25rem;
+		padding: 0.7rem 0.8rem 0.75rem;
+		background: var(--bg-page);
+		border: 1.5px solid var(--text);
+		border-radius: 4px;
+		box-shadow: 3px 3px 0 var(--text);
+	}
+	.preview-head {
+		display: flex;
+		justify-content: space-between;
+		align-items: center;
+		gap: 0.5rem;
+	}
+	.preview-eyebrow {
+		display: inline-flex;
+		align-items: center;
+		gap: 0.45rem;
+		font-family: var(--font-mono);
+		font-size: 0.66rem;
+		font-weight: 800;
+		letter-spacing: 0.14em;
+		text-transform: uppercase;
+		color: var(--text);
+	}
+	.preview-dot {
+		display: inline-block;
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--green, #1a7f37);
+		box-shadow: 0 0 0 2px rgba(26, 127, 55, 0.18);
+		animation: preview-pulse 1.8s ease-in-out infinite;
+	}
+	.preview-build {
+		font-family: var(--font-mono);
+		font-size: 0.62rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+		color: var(--text-muted);
+	}
+	.preview-body {
+		margin: 0;
+		font-size: 0.78rem;
+		line-height: 1.45;
+		color: var(--text-secondary);
+	}
+	@keyframes preview-pulse {
+		0%, 100% { box-shadow: 0 0 0 2px rgba(26, 127, 55, 0.18); }
+		50%      { box-shadow: 0 0 0 5px rgba(26, 127, 55, 0.05); }
+	}
+	@media (prefers-reduced-motion: reduce) {
+		.preview-dot { animation: none; }
 	}
 
 	form {
