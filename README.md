@@ -55,10 +55,18 @@ Honest backlog. Anything checked is shipped on `main`.
 - [x] Cognito email + passkey auth wired through `/login`.
 - [x] Owner-scoped Amplify Data models for pipelines, branches, sweeps, runs, registry, providers, jobs.
 - [x] `NumeraiAccount` model + `/settings` flow canvas for linking Numerai + GPU provider keys.
+- [x] Typed provider credential fields on `ComputeProvider` (apiKey, apiSecret, workspaceId, awsRoleArn, awsRegion, baseUrl) + per-provider drawer inputs in `/settings` (no more raw-JSON textarea).
+- [x] `verifyNumeraiAccount` and `verifyComputeProvider` custom mutations (Lambdas under `frontend/amplify/functions/`) — real Numerai GraphQL ping, shape/format checks for Modal + SageMaker + Prime Intellect, status stored on `verifiedAt` / `lastVerifyError`.
 - [x] `ModelRegistryItem.parentModelId` + `/evolution` flow canvas for lineage.
 - [x] Real CRUD on `/models` (replaces marketing fakery).
 - [x] `frontend/DESIGN.md` editorial visual language.
 - [ ] Move Numerai + provider secrets out of plaintext DynamoDB (Parameter Store SecureString most likely) before real keys go in.
+
+### Hardening the verify checks
+
+- [ ] Confirm Prime Intellect's real auth-check endpoint (current `/api/v1/me` is a guess; treat any non-2xx other than 404 as failure for now).
+- [ ] Promote SageMaker verify from shape-check to a real `sts:AssumeRole` against the provided role ARN — requires IAM perms on the verify-compute-provider Lambda.
+- [ ] Promote Modal verify from prefix-check to a real API call once their token-introspection endpoint is documented.
 
 ### Closing the loop with Numerai
 

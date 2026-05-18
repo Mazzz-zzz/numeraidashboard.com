@@ -1,4 +1,6 @@
 import { type ClientSchema, a, defineData } from '@aws-amplify/backend';
+import { verifyNumeraiAccount } from '../functions/verify-numerai-account/resource';
+import { verifyComputeProvider } from '../functions/verify-compute-provider/resource';
 
 const schema = a.schema({
 	Pipeline: a
@@ -88,7 +90,15 @@ const schema = a.schema({
 			name: a.string().required(),
 			providerType: a.enum(['prime_intellect', 'modal', 'sagemaker', 'local', 'custom']),
 			status: a.enum(['available', 'planned', 'disabled']),
+			apiKey: a.string(),
+			apiSecret: a.string(),
+			workspaceId: a.string(),
+			awsRoleArn: a.string(),
+			awsRegion: a.string(),
+			baseUrl: a.string(),
 			credentialsJson: a.json(),
+			verifiedAt: a.datetime(),
+			lastVerifyError: a.string(),
 			monthlyBudgetUsd: a.float(),
 			defaultRunCapUsd: a.float(),
 			maxConcurrentJobs: a.integer(),
@@ -119,6 +129,26 @@ const schema = a.schema({
 			logTail: a.string(),
 		})
 		.authorization((allow) => [allow.owner()]),
+
+	VerifyResult: a.customType({
+		ok: a.boolean().required(),
+		verifiedAt: a.datetime(),
+		error: a.string(),
+	}),
+
+	verifyNumeraiAccount: a
+		.mutation()
+		.arguments({ id: a.string().required() })
+		.returns(a.ref('VerifyResult'))
+		.authorization((allow) => [allow.authenticated()])
+		.handler(a.handler.function(verifyNumeraiAccount)),
+
+	verifyComputeProvider: a
+		.mutation()
+		.arguments({ id: a.string().required() })
+		.returns(a.ref('VerifyResult'))
+		.authorization((allow) => [allow.authenticated()])
+		.handler(a.handler.function(verifyComputeProvider)),
 });
 
 export type Schema = ClientSchema<typeof schema>;
