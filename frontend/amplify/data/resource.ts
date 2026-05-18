@@ -138,14 +138,25 @@ const schema = a.schema({
 
 	verifyNumeraiAccount: a
 		.mutation()
-		.arguments({ id: a.string().required() })
+		.arguments({
+			publicId: a.string().required(),
+			secretKey: a.string().required(),
+		})
 		.returns(a.ref('VerifyResult'))
 		.authorization((allow) => [allow.authenticated()])
 		.handler(a.handler.function(verifyNumeraiAccount)),
 
 	verifyComputeProvider: a
 		.mutation()
-		.arguments({ id: a.string().required() })
+		.arguments({
+			providerType: a.string().required(),
+			apiKey: a.string(),
+			apiSecret: a.string(),
+			workspaceId: a.string(),
+			awsRoleArn: a.string(),
+			awsRegion: a.string(),
+			baseUrl: a.string(),
+		})
 		.returns(a.ref('VerifyResult'))
 		.authorization((allow) => [allow.authenticated()])
 		.handler(a.handler.function(verifyComputeProvider)),

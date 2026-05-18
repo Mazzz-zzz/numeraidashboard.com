@@ -1,63 +1,37 @@
 import type { Schema } from '../../data/resource';
-import { Amplify } from 'aws-amplify';
-import { generateClient } from 'aws-amplify/data';
-import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtime';
-import { env } from '$amplify/env/verify-compute-provider';
 
-const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env);
-Amplify.configure(resourceConfig, libraryOptions);
-const client = generateClient<Schema>();
-
-type VerifyResult = { ok: boolean; verifiedAt: string | null; error: string | null };
+type Args = Schema['verifyComputeProvider']['args'];
+type Result = { ok: boolean; verifiedAt: string | null; error: string | null };
 
 export const handler: Schema['verifyComputeProvider']['functionHandler'] = async (event) => {
-	const id = event.arguments.id;
-	const owner = event.identity && 'sub' in event.identity ? `${event.identity.sub}::${event.identity.username}` : null;
-
-	const { data: row, errors } = await client.models.ComputeProvider.get({ id });
-	if (errors?.length || !row) {
-		return fail('Provider not found');
-	}
-	if (owner && row.owner && row.owner !== owner) {
-		return fail('Not authorized');
-	}
-
-	const verifyError = await verifyByType(row);
-
-	const now = new Date().toISOString();
-	if (verifyError) {
-		await client.models.ComputeProvider.update({ id, verifiedAt: null, lastVerifyError: verifyError });
-		return { ok: false, verifiedAt: null, error: verifyError } satisfies VerifyResult;
-	}
-	await client.models.ComputeProvider.update({ id, verifiedAt: now, lastVerifyError: null });
-	return { ok: true, verifiedAt: now, error: null } satisfies VerifyResult;
+	const err = await verifyByType(event.arguments);
+	if (err) return { ok: false, verifiedAt: null, error: err };
+	return { ok: true, verifiedAt: new Date().toISOString(), error: null };
 };
 
-type Row = NonNullable<Awaited<ReturnType<typeof client.models.ComputeProvider.get>>['data']>;
-
-async function verifyByType(row: Row): Promise<string | null> {
-	switch (row.providerType) {
+async function verifyByType(a: Args): Promise<string | null> {
+	switch (a.providerType) {
 		case 'prime_intellect':
-			return verifyPrimeIntellect(row);
+			return verifyPrimeIntellect(a);
 		case 'modal':
-			return verifyModal(row);
+			return verifyModal(a);
 		case 'sagemaker':
-			return verifySagemaker(row);
+			return verifySagemaker(a);
 		case 'local':
 			return null;
 		case 'custom':
-			return row.apiKey || row.baseUrl ? null : 'Custom provider needs at least apiKey or baseUrl';
+			return a.apiKey || a.baseUrl ? null : 'Custom provider needs at least apiKey or baseUrl';
 		default:
-			return 'Unknown provider type';
+			return `Unknown provider type: ${a.providerType}`;
 	}
 }
 
-async function verifyPrimeIntellect(row: Row): Promise<string | null> {
-	if (!row.apiKey) return 'apiKey is required';
-	const base = row.baseUrl?.replace(/\/$/, '') || 'https://api.primeintellect.ai';
+async function verifyPrimeIntellect(a: Args): Promise<string | null> {
+	if (!a.apiKey) return 'apiKey is required';
+	const base = (a.baseUrl ?? '').replace(/\/$/, '') || 'https://api.primeintellect.ai';
 	try {
 		const resp = await fetch(`${base}/api/v1/me`, {
-			headers: { Authorization: `Bearer ${row.apiKey}` },
+			headers: { Authorization: `Bearer ${a.apiKey}` },
 		});
 		if (resp.status === 404) return null;
 		if (!resp.ok) return `Prime Intellect responded ${resp.status}`;
@@ -67,20 +41,17 @@ async function verifyPrimeIntellect(row: Row): Promise<string | null> {
 	}
 }
 
-async function verifyModal(row: Row): Promise<string | null> {
-	if (!row.apiKey || !row.apiSecret) return 'Modal needs token id (apiKey) and token secret (apiSecret)';
-	if (!row.apiKey.startsWith('ak-')) return 'Modal token id should start with "ak-"';
-	if (!row.apiSecret.startsWith('as-')) return 'Modal token secret should start with "as-"';
+async function verifyModal(a: Args): Promise<string | null> {
+	if (!a.apiKey || !a.apiSecret) return 'Modal needs token id (apiKey) and token secret (apiSecret)';
+	if (!a.apiKey.startsWith('ak-')) return 'Modal token id should start with "ak-"';
+	if (!a.apiSecret.startsWith('as-')) return 'Modal token secret should start with "as-"';
 	return null;
 }
 
-async function verifySagemaker(row: Row): Promise<string | null> {
-	if (!row.awsRoleArn) return 'awsRoleArn is required';
-	if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@-]+$/.test(row.awsRoleArn)) return 'awsRoleArn does not look like a valid IAM role ARN';
-	if (!row.awsRegion) return 'awsRegion is required';
+async function verifySagemaker(a: Args): Promise<string | null> {
+	if (!a.awsRoleArn) return 'awsRoleArn is required';
+	if (!/^arn:aws:iam::\d{12}:role\/[\w+=,.@-]+$/.test(a.awsRoleArn))
+		return 'awsRoleArn does not look like a valid IAM role ARN';
+	if (!a.awsRegion) return 'awsRegion is required';
 	return null;
-}
-
-function fail(error: string): VerifyResult {
-	return { ok: false, verifiedAt: null, error };
 }
