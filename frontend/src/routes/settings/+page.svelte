@@ -18,6 +18,40 @@
 	type NumeraiAccount = Schema['NumeraiAccount']['type'];
 	type ComputeProvider = Schema['ComputeProvider']['type'];
 	type ProviderType = 'prime_intellect' | 'modal' | 'sagemaker' | 'local' | 'custom';
+	type ProviderForm = {
+		name: string;
+		providerType: ProviderType;
+		apiKey: string;
+		apiSecret: string;
+		workspaceId: string;
+		awsRoleArn: string;
+		awsRegion: string;
+		baseUrl: string;
+		monthlyBudgetUsd: string;
+		notes: string;
+	};
+	type ProviderTemplate = {
+		id: string;
+		name: string;
+		nodeLabel: string;
+		providerType: ProviderType;
+		logoSrc: string;
+		defaults: Partial<ProviderForm>;
+	};
+	type ProviderVerifyPayload = {
+		name: string;
+		providerType: ProviderType;
+		apiKey: string | null;
+		apiSecret: string | null;
+		workspaceId: string | null;
+		awsRoleArn: string | null;
+		awsRegion: string | null;
+		baseUrl: string | null;
+	};
+	type ProviderCheckState = {
+		status: 'idle' | 'checking' | 'ok' | 'error';
+		message: string;
+	};
 
 	type Passkey = {
 		credentialId: string;
@@ -33,6 +67,60 @@
 		local: 'Local',
 		custom: 'Custom'
 	};
+	const providerLogos: Partial<Record<ProviderType, string>> = {
+		prime_intellect: '/provider-logos/prime-intellect.png',
+		modal: '/provider-logos/modal.svg',
+		sagemaker: '/provider-logos/aws.png'
+	};
+	const providerTemplates: ProviderTemplate[] = [
+		{
+			id: 'prime-intellect',
+			name: 'Prime Intellect',
+			nodeLabel: 'Add Prime Intellect',
+			providerType: 'prime_intellect',
+			logoSrc: '/provider-logos/prime-intellect.png',
+			defaults: {
+				name: 'Prime Intellect',
+				baseUrl: 'https://api.primeintellect.ai',
+				notes: 'Paste a Prime Intellect API key. Workspace ID is optional.'
+			}
+		},
+		{
+			id: 'modal',
+			name: 'Modal',
+			nodeLabel: 'Add Modal',
+			providerType: 'modal',
+			logoSrc: '/provider-logos/modal.svg',
+			defaults: {
+				name: 'Modal',
+				notes: 'Create a Modal token and paste token ID (ak-) plus token secret (as-).'
+			}
+		},
+		{
+			id: 'sagemaker',
+			name: 'AWS SageMaker',
+			nodeLabel: 'Add SageMaker',
+			providerType: 'sagemaker',
+			logoSrc: '/provider-logos/aws.png',
+			defaults: {
+				name: 'AWS SageMaker',
+				awsRegion: 'ap-southeast-2',
+				notes: 'Paste an execution role ARN with SageMaker training permissions.'
+			}
+		},
+		{
+			id: 'lambda-cloud',
+			name: 'Lambda Cloud',
+			nodeLabel: 'Add Lambda Cloud',
+			providerType: 'custom',
+			logoSrc: '/provider-logos/lambda.svg',
+			defaults: {
+				name: 'Lambda Cloud',
+				baseUrl: 'https://cloud.lambdalabs.com/api/v1',
+				notes: 'Stored as a custom provider until Lambda Cloud gets first-class verification.'
+			}
+		}
+	];
 
 	let numeraiAccount = $state<NumeraiAccount | null>(null);
 	let providers = $state<ComputeProvider[]>([]);
@@ -48,7 +136,7 @@
 	let drawer = $state<DrawerState>({ kind: 'none' });
 
 	let numeraiForm = $state({ label: '', publicId: '', secretKey: '' });
-	let providerForm = $state({
+	let providerForm = $state<ProviderForm>({
 		name: '',
 		providerType: 'prime_intellect' as ProviderType,
 		apiKey: '',
@@ -60,6 +148,7 @@
 		monthlyBudgetUsd: '',
 		notes: ''
 	});
+	let providerCheck = $state<ProviderCheckState>({ status: 'idle', message: 'Not tested' });
 	let busy = $state(false);
 	let verifying = $state(false);
 
@@ -154,15 +243,22 @@
 				data: {
 					label: p.name,
 					providerType: p.providerType as ProviderType,
-					sub: p.monthlyBudgetUsd != null ? `$${p.monthlyBudgetUsd}/mo cap` : 'no budget cap'
+					sub: providerStatusLabel(p),
+					logoSrc: providerLogoFor(p),
+					linked: !!p.verifiedAt && !p.lastVerifyError
 				}
 			});
 		});
-		out.push({
-			id: 'add-provider',
-			type: 'add',
-			position: { x: 720, y: providerYStart + providers.length * providerYStep },
-			data: { label: 'Add compute provider' }
+		providerTemplates.forEach((template, i) => {
+			out.push({
+				id: providerTemplateNodeId(template),
+				type: 'add',
+				position: { x: 720, y: providerYStart + (providers.length + i) * providerYStep },
+				data: {
+					label: template.nodeLabel,
+					logoSrc: template.logoSrc
+				}
+			});
 		});
 
 		return out;
@@ -194,16 +290,18 @@
 				source: 'hub',
 				target: `provider-${p.id}`,
 				type: 'smoothstep',
-				animated: true,
+				animated: !!p.verifiedAt && !p.lastVerifyError,
 				style: 'stroke: var(--text); stroke-width: 1.4;'
 			});
 		});
-		out.push({
-			id: 'e-hub-add',
-			source: 'hub',
-			target: 'add-provider',
-			type: 'smoothstep',
-			style: 'stroke: var(--text); stroke-width: 1.2; stroke-dasharray: 4 4;'
+		providerTemplates.forEach((template) => {
+			out.push({
+				id: `e-hub-${template.id}`,
+				source: 'hub',
+				target: providerTemplateNodeId(template),
+				type: 'smoothstep',
+				style: 'stroke: var(--text); stroke-width: 1.2; stroke-dasharray: 4 4;'
+			});
 		});
 		return out;
 	}
@@ -219,9 +317,13 @@
 			drawer = { kind: 'numerai' };
 		} else if (node.id === 'passkeys') {
 			drawer = { kind: 'passkeys' };
-		} else if (node.id === 'add-provider') {
-			providerForm = blankProviderForm();
-			drawer = { kind: 'add-provider' };
+		} else if (node.id.startsWith('add-provider-')) {
+			const template = providerTemplates.find((candidate) => providerTemplateNodeId(candidate) === node.id);
+			if (template) {
+				applyProviderTemplate(template);
+				providerCheck = { status: 'idle', message: 'Not tested' };
+				drawer = { kind: 'add-provider' };
+			}
 		} else if (node.type === 'provider') {
 			const id = node.id.replace(/^provider-/, '');
 			const p = providers.find((pp) => pp.id === id);
@@ -236,11 +338,12 @@
 					awsRegion: p.awsRegion ?? '',
 					baseUrl: p.baseUrl ?? '',
 					monthlyBudgetUsd: p.monthlyBudgetUsd != null ? String(p.monthlyBudgetUsd) : '',
-					notes: p.notes ?? ''
-				};
-				drawer = { kind: 'provider', id };
+						notes: p.notes ?? ''
+					};
+					providerCheck = providerCheckStateFor(p);
+					drawer = { kind: 'provider', id };
+				}
 			}
-		}
 	}
 
 	function blankProviderForm() {
@@ -256,6 +359,57 @@
 			monthlyBudgetUsd: '',
 			notes: ''
 		};
+	}
+
+	function providerLogoFor(provider: ComputeProvider): string | null {
+		const providerType = provider.providerType as ProviderType | null;
+		if (providerType === 'custom') {
+			const haystack = `${provider.name ?? ''} ${provider.baseUrl ?? ''}`.toLowerCase();
+			if (haystack.includes('lambda')) return '/provider-logos/lambda.svg';
+		}
+		return providerType ? providerLogos[providerType] ?? null : null;
+	}
+
+	function providerStatusLabel(provider: ComputeProvider): string {
+		if (provider.lastVerifyError) return 'connection failed';
+		if (provider.verifiedAt) return `verified ${formatDate(provider.verifiedAt)}`;
+		return 'not verified';
+	}
+
+	function providerCheckStateFor(provider: ComputeProvider): ProviderCheckState {
+		if (provider.lastVerifyError) return { status: 'error', message: provider.lastVerifyError };
+		if (provider.verifiedAt) return { status: 'ok', message: `Verified ${formatDate(provider.verifiedAt)}` };
+		return { status: 'idle', message: 'Not tested' };
+	}
+
+	function providerPayloadFromForm(): ProviderVerifyPayload {
+		return {
+			name: providerForm.name.trim(),
+			providerType: providerForm.providerType,
+			apiKey: providerForm.apiKey.trim() || null,
+			apiSecret: providerForm.apiSecret.trim() || null,
+			workspaceId: providerForm.workspaceId.trim() || null,
+			awsRoleArn: providerForm.awsRoleArn.trim() || null,
+			awsRegion: providerForm.awsRegion.trim() || null,
+			baseUrl: providerForm.baseUrl.trim() || null
+		};
+	}
+
+	function markProviderCheckDirty() {
+		if (providerCheck.status === 'checking') return;
+		providerCheck = { status: 'idle', message: 'Edited since last check' };
+	}
+
+	function applyProviderTemplate(template: ProviderTemplate) {
+		providerForm = {
+			...blankProviderForm(),
+			providerType: template.providerType,
+			...template.defaults
+		};
+	}
+
+	function providerTemplateNodeId(template: ProviderTemplate) {
+		return `add-provider-${template.id}`;
 	}
 
 	function closeDrawer() {
@@ -323,24 +477,28 @@
 		}
 		busy = true;
 		try {
+			const providerPayload = providerPayloadFromForm();
 			const payload = {
-				name: providerForm.name.trim(),
-				providerType: providerForm.providerType,
-				apiKey: providerForm.apiKey.trim() || null,
-				apiSecret: providerForm.apiSecret.trim() || null,
-				workspaceId: providerForm.workspaceId.trim() || null,
-				awsRoleArn: providerForm.awsRoleArn.trim() || null,
-				awsRegion: providerForm.awsRegion.trim() || null,
-				baseUrl: providerForm.baseUrl.trim() || null,
+				...providerPayload,
 				monthlyBudgetUsd: providerForm.monthlyBudgetUsd ? Number(providerForm.monthlyBudgetUsd) : null,
 				notes: providerForm.notes.trim() || null
 			};
 			if (drawer.kind === 'provider') {
-				await dataClient().models.ComputeProvider.update({ id: drawer.id, ...payload });
-				addToast('Provider updated', 'success');
+				await dataClient().models.ComputeProvider.update({
+					id: drawer.id,
+					...payload,
+					verifiedAt: null,
+					lastVerifyError: null
+				});
+				await verifyProviderConnection(drawer.id, providerPayload);
 			} else {
-				await dataClient().models.ComputeProvider.create({ status: 'available', ...payload });
-				addToast(`${payload.name} added`, 'success');
+				const { data } = await dataClient().models.ComputeProvider.create({
+					status: 'available',
+					...payload,
+					verifiedAt: null,
+					lastVerifyError: null
+				});
+				if (data?.id) await verifyProviderConnection(data.id, providerPayload);
 			}
 			await loadProviders();
 			closeDrawer();
@@ -348,6 +506,56 @@
 			addToast(asMessage(e, 'Failed to save provider'), 'error');
 		} finally {
 			busy = false;
+		}
+	}
+
+	async function verifyProviderConnection(
+		id: string | null,
+		payload: ProviderVerifyPayload
+	): Promise<void> {
+		providerCheck = { status: 'checking', message: 'Checking connection...' };
+		const { data, errors } = await dataClient().mutations.verifyComputeProvider({
+			providerType: payload.providerType,
+			apiKey: payload.apiKey,
+			apiSecret: payload.apiSecret,
+			workspaceId: payload.workspaceId,
+			awsRoleArn: payload.awsRoleArn,
+			awsRegion: payload.awsRegion,
+			baseUrl: payload.baseUrl
+		});
+		if (errors?.length) throw new Error(errors[0].message);
+		const ok = !!data?.ok;
+		const verifiedAt = data?.verifiedAt ?? new Date().toISOString();
+		const error = data?.error ?? 'unknown error';
+		if (id) {
+			await dataClient().models.ComputeProvider.update({
+				id,
+				verifiedAt: ok ? verifiedAt : null,
+				lastVerifyError: ok ? null : error
+			});
+		}
+		providerCheck = ok ? { status: 'ok', message: `Verified ${formatDate(verifiedAt)}` } : { status: 'error', message: error };
+		addToast(
+			ok ? `${payload.name} connection verified` : `${payload.name} verify failed: ${error}`,
+			ok ? 'success' : 'error'
+		);
+	}
+
+	async function testProviderFormConnection() {
+		if (!providerForm.name.trim()) {
+			addToast('Provider name is required', 'error');
+			return;
+		}
+		verifying = true;
+		try {
+			await verifyProviderConnection(drawer.kind === 'provider' ? drawer.id : null, providerPayloadFromForm());
+			if (drawer.kind === 'provider') await loadProviders();
+		} catch (e) {
+			const message = asMessage(e, 'Verification failed');
+			providerCheck = { status: 'error', message };
+			addToast(message, 'error');
+		} finally {
+			verifying = false;
 		}
 	}
 
@@ -385,8 +593,9 @@
 		if (!p) return;
 		verifying = true;
 		try {
-			const { data, errors } = await dataClient().mutations.verifyComputeProvider({
-				providerType: p.providerType ?? 'custom',
+			await verifyProviderConnection(id, {
+				name: p.name,
+				providerType: (p.providerType as ProviderType) ?? 'custom',
 				apiKey: p.apiKey ?? null,
 				apiSecret: p.apiSecret ?? null,
 				workspaceId: p.workspaceId ?? null,
@@ -394,14 +603,6 @@
 				awsRegion: p.awsRegion ?? null,
 				baseUrl: p.baseUrl ?? null
 			});
-			if (errors?.length) throw new Error(errors[0].message);
-			const ok = !!data?.ok;
-			await dataClient().models.ComputeProvider.update({
-				id,
-				verifiedAt: ok ? data?.verifiedAt ?? new Date().toISOString() : null,
-				lastVerifyError: ok ? null : data?.error ?? 'unknown error'
-			});
-			addToast(ok ? 'Provider credentials verified' : `Verify failed: ${data?.error ?? 'unknown error'}`, ok ? 'success' : 'error');
 			await loadProviders();
 		} catch (e) {
 			addToast(asMessage(e, 'Verification failed'), 'error');
@@ -511,186 +712,199 @@
 								{#if drawer.kind === 'numerai'}Numerai account{/if}
 								{#if drawer.kind === 'passkeys'}Passkeys{/if}
 								{#if drawer.kind === 'provider'}{providerForm.name || 'Provider'}{/if}
-								{#if drawer.kind === 'add-provider'}New compute provider{/if}
+								{#if drawer.kind === 'add-provider'}Add {providerForm.name || 'compute provider'}{/if}
 							</h2>
 						</div>
 						<button type="button" class="ghost" onclick={closeDrawer} aria-label="Close">✕</button>
 					</header>
 
-					{#if drawer.kind === 'numerai'}
-						{#if numeraiAccount}
-							<dl class="kv">
-								<dt>Public ID</dt>
-								<dd class="mono">{numeraiAccount.publicId}</dd>
-								<dt>Secret key</dt>
-								<dd class="mono">{maskSecret(numeraiAccount.secretKey)}</dd>
-								<dt>Status</dt>
-								<dd>
-									{#if numeraiAccount.lastVerifyError}
-										<span class="status-bad">failed</span>
-										<span class="muted">{numeraiAccount.lastVerifyError}</span>
-									{:else if numeraiAccount.verifiedAt}
-										<span class="status-ok">verified</span>
-										<span class="muted">{formatDate(numeraiAccount.verifiedAt)}</span>
-									{:else}
-										<span class="status-unknown">not verified</span>
-									{/if}
-								</dd>
-							</dl>
-						{/if}
-						<form class="form" onsubmit={saveNumerai}>
-							<label>
-								<span>Label</span>
-								<input type="text" bind:value={numeraiForm.label} placeholder="Main account" />
-							</label>
-							<label>
-								<span>Public ID</span>
-								<input type="text" bind:value={numeraiForm.publicId} autocomplete="off" required />
-							</label>
-							<label>
-								<span>Secret key {numeraiAccount ? '(leave blank to keep current)' : ''}</span>
-								<input type="password" bind:value={numeraiForm.secretKey} autocomplete="off" />
-							</label>
-							<div class="form-actions">
-								<button type="submit" class="primary" disabled={busy}>
-									{busy ? 'Saving…' : numeraiAccount ? 'Save changes' : 'Link account'}
-								</button>
-								{#if numeraiAccount}
-									<div class="secondary-row">
-										<button type="button" onclick={verifyNumerai} disabled={busy || verifying}>
-											{verifying ? 'Verifying…' : 'Verify'}
-										</button>
-										<button type="button" class="danger" onclick={removeNumerai} disabled={busy}>Remove</button>
-									</div>
-								{/if}
-							</div>
-						</form>
-					{:else if drawer.kind === 'passkeys'}
-						<p class="muted">Use Touch ID, Face ID, or a security key to sign in without a password.</p>
-						{#if passkeys.length === 0}
-							<p class="muted">No passkeys yet.</p>
-						{:else}
-							<ul class="rows">
-								{#each passkeys as pk (pk.credentialId)}
-									<li class="row">
-										<div>
-											<strong>{pk.friendlyCredentialName ?? 'Passkey'}</strong>
-											<span class="muted">added {formatDate(pk.createdAt)}</span>
-										</div>
-										<button type="button" class="danger" onclick={() => removePasskey(pk.credentialId)} disabled={busy}>
-											Remove
-										</button>
-									</li>
-								{/each}
-							</ul>
-						{/if}
-						<div class="form-actions">
-							<button type="button" class="primary" onclick={addPasskey} disabled={busy}>
-								{busy ? 'Working…' : 'Add passkey'}
-							</button>
-						</div>
-					{:else if drawer.kind === 'provider' || drawer.kind === 'add-provider'}
-						{#if drawer.kind === 'provider' && currentProvider}
-							<dl class="kv">
-								<dt>Status</dt>
-								<dd>
-									{#if currentProvider.lastVerifyError}
-										<span class="status-bad">failed</span>
-										<span class="muted">{currentProvider.lastVerifyError}</span>
-									{:else if currentProvider.verifiedAt}
-										<span class="status-ok">verified</span>
-										<span class="muted">{formatDate(currentProvider.verifiedAt)}</span>
-									{:else}
-										<span class="status-unknown">not verified</span>
-									{/if}
-								</dd>
-							</dl>
-						{/if}
-						<form class="form" onsubmit={saveProvider}>
-							<label>
-								<span>Name</span>
-								<input type="text" bind:value={providerForm.name} placeholder="Prime A100s" required />
-							</label>
-							<label>
-								<span>Type</span>
-								<select bind:value={providerForm.providerType}>
-									{#each providerTypes as t (t)}
-										<option value={t}>{providerLabels[t]}</option>
-									{/each}
-								</select>
-							</label>
-
-							{#if providerForm.providerType === 'prime_intellect'}
-								<label>
-									<span>API key</span>
-									<input type="password" bind:value={providerForm.apiKey} autocomplete="off" placeholder="pi_…" />
-								</label>
-								<label>
-									<span>Workspace ID (optional)</span>
-									<input type="text" bind:value={providerForm.workspaceId} placeholder="ws_…" />
-								</label>
-								<label>
-									<span>Base URL (optional override)</span>
-									<input type="text" bind:value={providerForm.baseUrl} placeholder="https://api.primeintellect.ai" />
-								</label>
-							{:else if providerForm.providerType === 'modal'}
-								<label>
-									<span>Token ID</span>
-									<input type="text" bind:value={providerForm.apiKey} autocomplete="off" placeholder="ak-…" />
-								</label>
-								<label>
-									<span>Token secret</span>
-									<input type="password" bind:value={providerForm.apiSecret} autocomplete="off" placeholder="as-…" />
-								</label>
-							{:else if providerForm.providerType === 'sagemaker'}
-								<label>
-									<span>Execution role ARN</span>
-									<input type="text" bind:value={providerForm.awsRoleArn} placeholder="arn:aws:iam::123456789012:role/SageMakerRole" />
-								</label>
-								<label>
-									<span>AWS region</span>
-									<input type="text" bind:value={providerForm.awsRegion} placeholder="ap-southeast-2" />
-								</label>
-							{:else if providerForm.providerType === 'custom'}
-								<label>
-									<span>API key (optional)</span>
-									<input type="password" bind:value={providerForm.apiKey} autocomplete="off" />
-								</label>
-								<label>
-									<span>Base URL</span>
-									<input type="text" bind:value={providerForm.baseUrl} placeholder="https://…" />
-								</label>
+					<div class="drawer-body">
+						{#if drawer.kind === 'numerai'}
+							{#if numeraiAccount}
+								<dl class="kv">
+									<dt>Public ID</dt>
+									<dd class="mono">{numeraiAccount.publicId}</dd>
+									<dt>Secret key</dt>
+									<dd class="mono">{maskSecret(numeraiAccount.secretKey)}</dd>
+									<dt>Status</dt>
+									<dd>
+										{#if numeraiAccount.lastVerifyError}
+											<span class="status-bad">failed</span>
+											<span class="muted">{numeraiAccount.lastVerifyError}</span>
+										{:else if numeraiAccount.verifiedAt}
+											<span class="status-ok">verified</span>
+											<span class="muted">{formatDate(numeraiAccount.verifiedAt)}</span>
+										{:else}
+											<span class="status-unknown">not verified</span>
+										{/if}
+									</dd>
+								</dl>
 							{/if}
-
-							<label>
-								<span>Monthly budget (USD)</span>
-								<input
-									type="number"
-									min="0"
-									step="0.01"
-									bind:value={providerForm.monthlyBudgetUsd}
-									placeholder="100"
-								/>
-							</label>
-							<label>
-								<span>Notes</span>
-								<input type="text" bind:value={providerForm.notes} placeholder="us-west-2, reserved capacity" />
-							</label>
+							<form class="form" onsubmit={saveNumerai}>
+								<label>
+									<span>Label</span>
+									<input type="text" bind:value={numeraiForm.label} placeholder="Main account" />
+								</label>
+								<label>
+									<span>Public ID</span>
+									<input type="text" bind:value={numeraiForm.publicId} autocomplete="off" required />
+								</label>
+								<label>
+									<span>Secret key {numeraiAccount ? '(leave blank to keep current)' : ''}</span>
+									<input type="password" bind:value={numeraiForm.secretKey} autocomplete="off" />
+								</label>
+								<div class="form-actions">
+									<button type="submit" class="primary" disabled={busy}>
+										{busy ? 'Saving…' : numeraiAccount ? 'Save changes' : 'Link account'}
+									</button>
+									{#if numeraiAccount}
+										<div class="secondary-row">
+											<button type="button" onclick={verifyNumerai} disabled={busy || verifying}>
+												{verifying ? 'Verifying…' : 'Verify'}
+											</button>
+											<button type="button" class="danger" onclick={removeNumerai} disabled={busy}>Remove</button>
+										</div>
+									{/if}
+								</div>
+							</form>
+						{:else if drawer.kind === 'passkeys'}
+							<p class="muted">Use Touch ID, Face ID, or a security key to sign in without a password.</p>
+							{#if passkeys.length === 0}
+								<p class="muted">No passkeys yet.</p>
+							{:else}
+								<ul class="rows">
+									{#each passkeys as pk (pk.credentialId)}
+										<li class="row">
+											<div>
+												<strong>{pk.friendlyCredentialName ?? 'Passkey'}</strong>
+												<span class="muted">added {formatDate(pk.createdAt)}</span>
+											</div>
+											<button type="button" class="danger" onclick={() => removePasskey(pk.credentialId)} disabled={busy}>
+												Remove
+											</button>
+										</li>
+									{/each}
+								</ul>
+							{/if}
 							<div class="form-actions">
-								<button type="submit" class="primary" disabled={busy}>
-									{busy ? 'Saving…' : drawer.kind === 'provider' ? 'Save changes' : 'Add provider'}
+								<button type="button" class="primary" onclick={addPasskey} disabled={busy}>
+									{busy ? 'Working…' : 'Add passkey'}
 								</button>
-								{#if drawer.kind === 'provider'}
-									<div class="secondary-row">
-										<button type="button" onclick={verifyProvider} disabled={busy || verifying}>
-											{verifying ? 'Verifying…' : 'Verify'}
-										</button>
-										<button type="button" class="danger" onclick={removeProvider} disabled={busy}>Remove</button>
-									</div>
-								{/if}
 							</div>
-						</form>
-					{/if}
+						{:else if drawer.kind === 'provider' || drawer.kind === 'add-provider'}
+							{#if drawer.kind === 'provider' && currentProvider}
+								<dl class="kv">
+									<dt>Status</dt>
+									<dd>
+										{#if currentProvider.lastVerifyError}
+											<span class="status-bad">failed</span>
+											<span class="muted">{currentProvider.lastVerifyError}</span>
+										{:else if currentProvider.verifiedAt}
+											<span class="status-ok">verified</span>
+											<span class="muted">{formatDate(currentProvider.verifiedAt)}</span>
+										{:else}
+											<span class="status-unknown">not verified</span>
+										{/if}
+									</dd>
+								</dl>
+							{/if}
+							<form class="form" onsubmit={saveProvider} oninput={markProviderCheckDirty}>
+								{#if drawer.kind === 'provider'}
+									<label>
+										<span>Name</span>
+										<input type="text" bind:value={providerForm.name} placeholder="Prime A100s" required />
+									</label>
+									<label>
+										<span>Type</span>
+										<select bind:value={providerForm.providerType}>
+											{#each providerTypes as t (t)}
+												<option value={t}>{providerLabels[t]}</option>
+											{/each}
+										</select>
+									</label>
+								{/if}
+
+								{#if providerForm.providerType === 'prime_intellect'}
+									<label>
+										<span>API key</span>
+										<input type="password" bind:value={providerForm.apiKey} autocomplete="off" placeholder="pi_…" />
+									</label>
+									<label>
+										<span>Workspace ID (optional)</span>
+										<input type="text" bind:value={providerForm.workspaceId} placeholder="ws_…" />
+									</label>
+									<label>
+										<span>Base URL (optional override)</span>
+										<input type="text" bind:value={providerForm.baseUrl} placeholder="https://api.primeintellect.ai" />
+									</label>
+								{:else if providerForm.providerType === 'modal'}
+									<label>
+										<span>Token ID</span>
+										<input type="text" bind:value={providerForm.apiKey} autocomplete="off" placeholder="ak-…" />
+									</label>
+									<label>
+										<span>Token secret</span>
+										<input type="password" bind:value={providerForm.apiSecret} autocomplete="off" placeholder="as-…" />
+									</label>
+								{:else if providerForm.providerType === 'sagemaker'}
+									<label>
+										<span>Execution role ARN</span>
+										<input type="text" bind:value={providerForm.awsRoleArn} placeholder="arn:aws:iam::123456789012:role/SageMakerRole" />
+									</label>
+									<label>
+										<span>AWS region</span>
+										<input type="text" bind:value={providerForm.awsRegion} placeholder="ap-southeast-2" />
+									</label>
+								{:else if providerForm.providerType === 'custom'}
+									<label>
+										<span>API key (optional)</span>
+										<input type="password" bind:value={providerForm.apiKey} autocomplete="off" />
+									</label>
+									<label>
+										<span>Base URL</span>
+										<input type="text" bind:value={providerForm.baseUrl} placeholder="https://…" />
+									</label>
+								{/if}
+
+								{#if drawer.kind === 'provider'}
+									<label>
+										<span>Monthly budget (USD)</span>
+										<input
+											type="number"
+											min="0"
+											step="0.01"
+											bind:value={providerForm.monthlyBudgetUsd}
+											placeholder="100"
+										/>
+									</label>
+								{/if}
+								<label>
+									<span>Notes</span>
+									<input type="text" bind:value={providerForm.notes} placeholder="us-west-2, reserved capacity" />
+								</label>
+								<div class="connection-check" class:ok={providerCheck.status === 'ok'} class:error={providerCheck.status === 'error'}>
+									<span class="connection-dot" aria-hidden="true"></span>
+									<div>
+										<strong>Connection</strong>
+										<span>{providerCheck.message}</span>
+									</div>
+									<button type="button" onclick={testProviderFormConnection} disabled={busy || verifying}>
+										{verifying ? 'Checking...' : 'Test connection'}
+									</button>
+								</div>
+								<div class="form-actions">
+									<button type="submit" class="primary" disabled={busy}>
+										{busy ? 'Saving…' : drawer.kind === 'provider' ? 'Save changes' : 'Add provider'}
+									</button>
+									{#if drawer.kind === 'provider'}
+										<div class="secondary-row">
+											<button type="button" class="danger" onclick={removeProvider} disabled={busy}>Remove</button>
+										</div>
+									{/if}
+								</div>
+							</form>
+						{/if}
+					</div>
 				</aside>
 			{/if}
 		</div>
@@ -705,15 +919,14 @@
 	.flow-shell {
 		position: relative;
 		display: grid;
-		grid-template-columns: 1fr 0;
+		--drawer-width: clamp(520px, 44vw, 760px);
+		grid-template-columns: 1fr;
 		gap: 0;
-		transition: grid-template-columns 0.25s ease;
 		height: calc(100vh - var(--nav-height, 88px));
 		min-height: 480px;
 		background: var(--bg-page);
 		overflow: hidden;
 	}
-	.flow-shell.drawer-open { grid-template-columns: 1fr 380px; }
 
 	.flow-canvas {
 		min-width: 0;
@@ -737,14 +950,35 @@
 	}
 
 	.drawer {
+		position: absolute;
+		inset: 12px 12px 12px auto;
+		z-index: 10;
 		display: grid;
 		grid-template-rows: auto 1fr;
-		gap: 1.1rem;
+		width: var(--drawer-width);
+		max-width: calc(100% - 24px);
+		min-width: 0;
+		height: calc(100% - 24px);
+		min-height: 0;
 		padding: 1.25rem 1.25rem 1.4rem;
 		background: var(--bg-card);
-		border-left: 1.5px solid var(--text);
-		overflow-y: auto;
+		border: 1.5px solid var(--text);
+		box-shadow: -4px 4px 0 var(--text);
+		overflow: hidden;
 	}
+
+		.drawer-body {
+			display: grid;
+			align-content: start;
+			gap: 1.1rem;
+			min-width: 0;
+			min-height: 0;
+			margin-top: -4px;
+			margin-left: -4px;
+			overflow-x: hidden;
+			overflow-y: auto;
+			padding: 4px 0.4rem 6px 4px;
+		}
 
 	.drawer-head {
 		display: flex;
@@ -752,8 +986,11 @@
 		align-items: flex-start;
 		gap: 0.5rem;
 		padding-bottom: 0.9rem;
+		margin-bottom: 1.1rem;
 		border-bottom: 1.5px solid var(--text);
+		min-width: 0;
 	}
+	.drawer-head > div { min-width: 0; }
 	.drawer-head .eyebrow {
 		font-family: var(--font-mono);
 		font-size: 0.66rem;
@@ -774,21 +1011,11 @@
 		margin-top: -0.25rem;
 	}
 
-	.section-eyebrow {
-		display: block;
-		margin: 0.15rem 0 -0.1rem;
-		font-family: var(--font-mono);
-		font-size: 0.62rem;
-		font-weight: 800;
-		letter-spacing: 0.14em;
-		text-transform: uppercase;
-		color: var(--text-muted);
-	}
-
 	button {
 		font: inherit;
 		font-size: 0.82rem;
 		font-weight: 700;
+		min-height: 38px;
 		padding: 0.5rem 0.85rem;
 		border-radius: 4px;
 		border: 1px solid var(--text);
@@ -815,6 +1042,52 @@
 		padding: 0.25rem 0.4rem;
 	}
 
+	.connection-check {
+		display: grid;
+		grid-template-columns: 10px minmax(0, 1fr) auto;
+		align-items: center;
+		gap: 0.65rem;
+		min-width: 0;
+		min-height: 58px;
+		padding: 0.65rem 0.75rem;
+		background: var(--bg-page);
+		border: 1.5px solid var(--text);
+		border-radius: 4px;
+	}
+	.connection-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 50%;
+		background: var(--text-muted);
+	}
+	.connection-check.ok .connection-dot {
+		background: var(--green);
+		box-shadow: 0 0 0 2px rgba(26, 127, 55, 0.18);
+	}
+	.connection-check.error .connection-dot {
+		background: var(--red);
+		box-shadow: 0 0 0 2px rgba(207, 34, 46, 0.14);
+	}
+	.connection-check > div {
+		display: grid;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+	.connection-check strong {
+		font-size: 0.84rem;
+		font-weight: 720;
+	}
+	.connection-check span {
+		color: var(--text-secondary);
+		font-size: 0.74rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
+	.connection-check button {
+		white-space: nowrap;
+	}
+
 	.muted { color: var(--text-muted); margin: 0; font-size: 0.85rem; }
 	.mono { font-family: var(--font-mono); }
 
@@ -837,10 +1110,11 @@
 
 	.kv {
 		display: grid;
-		grid-template-columns: max-content 1fr;
+		grid-template-columns: max-content minmax(0, 1fr);
 		gap: 0.5rem 0.85rem;
 		margin: 0;
 		padding: 0.8rem 0.85rem;
+		min-width: 0;
 		background: var(--bg-page);
 		border: 1.5px solid var(--text);
 		border-radius: 4px;
@@ -855,12 +1129,22 @@
 		text-transform: uppercase;
 		align-self: center;
 	}
-	.kv dd { margin: 0; font-size: 0.85rem; }
+	.kv dd {
+		min-width: 0;
+		margin: 0;
+		font-size: 0.85rem;
+		overflow-wrap: anywhere;
+	}
 
-	.form { display: grid; gap: 0.85rem; }
+	.form {
+		display: grid;
+		gap: 0.85rem;
+		min-width: 0;
+	}
 	.form label {
 		display: grid;
 		gap: 0.35rem;
+		min-width: 0;
 		font-size: 0.85rem;
 	}
 	.form label > span {
@@ -873,10 +1157,13 @@
 		padding-left: 0.75rem;
 	}
 	.form input,
-	.form select,
-	.form textarea {
+	.form select {
 		font: inherit;
 		font-size: 0.9rem;
+		width: 100%;
+		height: 42px;
+		min-width: 0;
+		box-sizing: border-box;
 		padding: 0.6rem 0.75rem;
 		border: 1.5px solid var(--text);
 		border-radius: 4px;
@@ -885,24 +1172,20 @@
 		transition: box-shadow 0.12s ease, transform 0.12s ease;
 	}
 	.form input:hover,
-	.form select:hover,
-	.form textarea:hover {
+	.form select:hover {
 		background: var(--bg-card);
 	}
 	.form input:focus,
-	.form select:focus,
-	.form textarea:focus {
+	.form select:focus {
 		outline: none;
 		box-shadow: 3px 3px 0 var(--text);
 		transform: translate(-1px, -1px);
 		background: var(--bg-card);
 	}
-	.form input::placeholder,
-	.form textarea::placeholder {
+	.form input::placeholder {
 		color: var(--text-muted);
 		opacity: 0.7;
 	}
-	.form textarea { font-family: var(--font-mono); resize: vertical; }
 
 	.form-actions {
 		display: grid;
@@ -928,30 +1211,54 @@
 	}
 	.form-actions .secondary-row > button {
 		flex: 1;
+		min-width: 0;
 	}
 
-	.rows { list-style: none; padding: 0; margin: 0; display: grid; gap: 0.45rem; }
+	.rows {
+		list-style: none;
+		padding: 0;
+		margin: 0;
+		display: grid;
+		gap: 0.45rem;
+		min-width: 0;
+	}
 	.row {
 		display: flex;
 		justify-content: space-between;
 		align-items: center;
 		gap: 0.5rem;
+		min-width: 0;
+		min-height: 58px;
 		padding: 0.65rem 0.8rem;
 		background: var(--bg-page);
 		border: 1.5px solid var(--text);
 		border-radius: 4px;
 	}
-	.row > div { display: grid; gap: 0.15rem; }
-	.row strong { font-size: 0.88rem; }
+	.row > div {
+		display: grid;
+		gap: 0.15rem;
+		min-width: 0;
+	}
+	.row strong {
+		font-size: 0.88rem;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		white-space: nowrap;
+	}
 	.row .muted { font-size: 0.72rem; font-family: var(--font-mono); }
 
 	@media (max-width: 880px) {
 		.flow-shell {
 			grid-template-columns: 1fr;
+			height: calc(100vh - var(--nav-height, 88px));
+			min-height: 560px;
+		}
+		.flow-canvas { height: 100%; }
+		.drawer {
+			inset: 10px;
+			width: auto;
+			max-width: none;
 			height: auto;
 		}
-		.flow-shell.drawer-open { grid-template-columns: 1fr; }
-		.flow-canvas { height: 480px; }
-		.drawer { border-left: none; border-top: 1px solid var(--text); }
 	}
 </style>
