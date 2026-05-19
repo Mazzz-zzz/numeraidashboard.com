@@ -1,12 +1,18 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
 
-	let { data, selected }: { data: { label: string }; selected?: boolean } = $props();
+	let { data, selected }: { data: { label: string; logoSrc?: string | null }; selected?: boolean } = $props();
 </script>
 
 <div class="node" class:selected>
 	<Handle type="target" position={Position.Left} />
-	<div class="glyph">+</div>
+	<div class="glyph">
+		{#if data.logoSrc}
+			<img src={data.logoSrc} alt="" aria-hidden="true" />
+		{:else}
+			+
+		{/if}
+	</div>
 	<div class="text">
 		<span class="eyebrow">Add</span>
 		<strong>{data.label}</strong>
@@ -42,6 +48,11 @@
 		font-family: var(--font-mono);
 		font-size: 1.4rem;
 		font-weight: 800;
+	}
+	.glyph img {
+		width: 30px;
+		height: 30px;
+		object-fit: contain;
 	}
 	.text { display: grid; gap: 0.15rem; }
 	.eyebrow {

@@ -46,6 +46,18 @@ and hidden from the nav until login. The homepage (`/`) is public.
 
 See `ml/README.md`.
 
+## Design notes
+
+The frontend follows an editorial technical-document style: cream page background,
+sharp black borders, monospace eyebrows, 4px radii, and hard offset shadows with no
+blur. Interactive surfaces should lift top-left on hover/focus with the shadow
+expanding down-right, matching the flow node behavior.
+
+For settings-style drawers, prefer a right-side overlay instead of resizing the
+main canvas. The drawer should use a large responsive width, its own bounded
+scroll area, and enough internal top/left padding so translated focus shadows on
+inputs are not clipped.
+
 ## What's next
 
 Honest backlog. Anything checked is shipped on `main`.
@@ -60,6 +72,7 @@ Honest backlog. Anything checked is shipped on `main`.
 - [x] `ModelRegistryItem.parentModelId` + `/evolution` flow canvas for lineage.
 - [x] Real CRUD on `/models` (replaces marketing fakery).
 - [x] `frontend/DESIGN.md` editorial visual language.
+- [x] Direct branded add-provider nodes in the `/settings` flow for Prime Intellect, Modal, AWS SageMaker, and Lambda Cloud; selecting one opens the drawer prefilled.
 - [ ] Move Numerai + provider secrets out of plaintext DynamoDB (Parameter Store SecureString most likely) before real keys go in.
 
 ### Hardening the verify checks
@@ -88,5 +101,3 @@ Honest backlog. Anything checked is shipped on `main`.
 - [ ] Fix the 3 pre-existing `svelte-check` errors in `routes/builder/+page.svelte` and `routes/ml/+page.svelte`.
 - [ ] Apply `DESIGN.md` conventions to `/builder`, `/compute`, `/ml`, `/chart`, and the homepage (they predate the editorial language).
 - [ ] Decide what to do with `ModelRegistryItem.lineageJson` (currently unused — either populate from a training run snapshot or drop the field).
-- [ ] Real provider logos in flow nodes (current SVGs are stylized abstractions to avoid trademark issues).
-

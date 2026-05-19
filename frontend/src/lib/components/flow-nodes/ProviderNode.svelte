@@ -6,7 +6,13 @@
 		data,
 		selected
 	}: {
-		data: { label: string; providerType: ProviderType | string; sub: string };
+		data: {
+			label: string;
+			providerType: ProviderType | string;
+			sub: string;
+			logoSrc?: string | null;
+			linked: boolean;
+		};
 		selected?: boolean;
 	} = $props();
 
@@ -22,7 +28,9 @@
 <div class="node" class:selected data-type={data.providerType}>
 	<Handle type="target" position={Position.Left} />
 	<div class="glyph">
-		{#if data.providerType === 'prime_intellect'}
+		{#if data.logoSrc}
+			<img src={data.logoSrc} alt="" aria-hidden="true" />
+		{:else if data.providerType === 'prime_intellect'}
 			<svg viewBox="0 0 32 32" aria-hidden="true">
 				<rect x="6" y="9" width="20" height="2.2" fill="currentColor" />
 				<rect x="9" y="11" width="2.2" height="14" fill="currentColor" />
@@ -56,7 +64,7 @@
 		<strong>{data.label}</strong>
 		<span class="sub">{data.sub}</span>
 	</div>
-	<span class="dot on"></span>
+	<span class="dot" class:on={data.linked}></span>
 </div>
 
 <style>
@@ -78,7 +86,6 @@
 	}
 	.node:hover { transform: translate(-1px, -1px); box-shadow: 4px 4px 0 var(--text); }
 	.node.selected { background: var(--bg-page); box-shadow: 5px 5px 0 var(--text); }
-
 	.glyph {
 		width: 40px;
 		height: 40px;
@@ -89,6 +96,11 @@
 		background: var(--bg-page);
 	}
 	.glyph svg { width: 24px; height: 24px; }
+	.glyph img {
+		width: 30px;
+		height: 30px;
+		object-fit: contain;
+	}
 	.text { display: grid; gap: 0.15rem; min-width: 0; }
 	.eyebrow {
 		font-family: var(--font-mono);

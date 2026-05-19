@@ -38,6 +38,7 @@ Defined in `src/routes/+layout.svelte` under `:global(:root)`.
 - Borders are **`var(--text)`** (near-black), not gray. Default `1.5px`; bump to `2px` for emphasized cards (hub node, primary panels).
 - Radius: **`4px`** for boxes, **`6px`** for outer shells, **`999px`** for pill chips. Never higher than 6px — the look is intentionally hard-edged.
 - Drop shadow: **hard offset**, not blur. `box-shadow: 3px 3px 0 var(--text);` (or `4px 4px 0` for hub-level). On hover: lift by `translate(-1px, -1px)` and increase shadow to `4px 4px 0`.
+- Inputs and drawer controls follow the same physical model as nodes: focus/hover moves the element **top-left** and leaves the shadow down-right. Scroll containers need top/left breathing room so this translated state is never clipped.
 - Status badges (when needed): use `--badge-blue / --badge-green / --badge-red` — translucent tints with no border.
 
 ## 4. Component patterns
@@ -74,7 +75,9 @@ The settings page is a Svelte Flow canvas. Conventions:
 - **Background**: dotted grid, `patternColor: rgba(23,23,23,0.08)`, `gap: 28`.
 - **Controls**: present, `showLock={false}`. Style overrides: bordered `var(--text)`, hard `2px 2px 0` shadow, no rounded corners beyond 4px.
 - **Nodes are non-draggable, non-connectable**. The flow is presentational — interaction is click-to-open-drawer, not free-form node editing. Keep it that way unless we're shipping pipeline authoring.
-- **Drawer**: 380px wide, slides in from the right by transitioning `grid-template-columns`. Internally: eyebrow + title at top, form below, action row at bottom. `border-left: 1px solid var(--text)`.
+- **Provider add nodes** are direct default flow nodes connected from the hub. Keep Prime Intellect, Modal, AWS SageMaker, and Lambda Cloud visible as four branded dashed nodes labeled like "Add Modal"; clicking one should prefill the add-provider drawer.
+- **Drawer**: right-side overlay, not a grid column. Use a large responsive width (`clamp(...)`), a hard border and offset shadow, and an independent scroll body. Do not squeeze the canvas to make room for the drawer. Internally: eyebrow + title fixed at top, scrollable form/content below.
+- **Scrollable drawer body**: give the scroll region top/left inset or equivalent negative margin + padding so focused inputs can translate `-1px, -1px` without clipping their borders or shadows.
 
 ## 6. Fullscreen layout
 
@@ -90,7 +93,6 @@ Use this pattern when adding more flow-canvas pages (e.g. a future `/pipelines` 
 
 Restrained. The only animations in use are:
 - Hover lift on cards/nodes (`transform: translate(-1px, -1px)`, 120ms).
-- Drawer slide-in via `grid-template-columns` transition (250ms ease).
 - Svelte Flow edge dashes (`animated: true`) — built-in.
 
 No fade-ins, parallax, or "delight" microinteractions. The cream/black palette doesn't need them; movement should be reserved for *signal* (e.g. animated edge = active link), not ambience.
@@ -103,5 +105,5 @@ No fade-ins, parallax, or "delight" microinteractions. The cream/black palette d
 ## 9. Open conventions / gaps
 
 - No dark mode yet. If added, the editorial aesthetic should translate to off-black bg with cream/bone text, **not** the standard dark-SaaS navy.
-- Node component icons are stylized monochrome SVGs, drawn to be brand-evocative without copying real trademarks. When real provider logos arrive (Prime Intellect, Modal, SageMaker), swap the inline SVG inside each node component without touching layout.
+- Provider nodes should use the static logo assets in `static/provider-logos/` when available. Keep the logo inside the existing 40–42px outlined square so branding does not break the editorial node layout.
 - The `/builder`, `/models`, `/compute`, `/ml`, `/chart` pages predate this guide and don't all follow these conventions yet. Update opportunistically.
