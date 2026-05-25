@@ -36,13 +36,13 @@ describe('training function status transitions', () => {
 	it('returns terminal poll results with metrics payloads for completed jobs', async () => {
 		const result = await pollTrainingJob({
 			runId: 'run-1',
-			providerType: 'modal',
-			providerJobId: 'modal-completed-123',
+			providerType: 'sagemaker',
+			providerJobId: 'sagemaker-completed-123',
 			checkedAt,
 		});
 
 		expect(result.status).toBe('completed');
-		expect(result.providerJobId).toBe('modal-completed-123');
+		expect(result.providerJobId).toBe('sagemaker-completed-123');
 		expect(result.metricsJson).toEqual({ providerStatus: 'completed', checkedAt });
 	});
 
@@ -58,11 +58,43 @@ describe('training function status transitions', () => {
 		expect(
 			await cancelTrainingJob({
 				runId: 'run-1',
-				providerType: 'modal',
-				providerJobId: 'modal-job-1',
+				providerType: 'sagemaker',
+				providerJobId: 'sagemaker-job-1',
 				checkedAt,
 			})
-		).toMatchObject({ ok: true, status: 'cancelled', providerJobId: 'modal-job-1' });
+		).toMatchObject({ ok: true, status: 'cancelled', providerJobId: 'sagemaker-job-1' });
+	});
+
+	it('polls and cancels Modal dry-run jobs without a live spawn call', async () => {
+		const providerConfigJson = { modal: { dryRun: true } };
+
+		await expect(
+			pollTrainingJob({
+				runId: 'run-modal',
+				providerType: 'modal',
+				providerJobId: 'modal-dry-run-numerai-run-modal-abcdef12',
+				providerConfigJson,
+				checkedAt,
+			})
+		).resolves.toMatchObject({
+			ok: true,
+			status: 'running',
+			providerJobId: 'modal-dry-run-numerai-run-modal-abcdef12',
+		});
+
+		await expect(
+			cancelTrainingJob({
+				runId: 'run-modal',
+				providerType: 'modal',
+				providerJobId: 'modal-dry-run-numerai-run-modal-abcdef12',
+				providerConfigJson,
+				checkedAt,
+			})
+		).resolves.toMatchObject({
+			ok: true,
+			status: 'cancelled',
+			providerJobId: 'modal-dry-run-numerai-run-modal-abcdef12',
+		});
 	});
 
 	it('polls and cancels Prime dry-run jobs without a live pod API call', async () => {

@@ -1,3 +1,4 @@
+import { cancelModalJob, pollModalJob } from './modal';
 import { cancelPrimePod, pollPrimePod } from './prime-intellect';
 
 export const normalizedTrainingStatuses = [
@@ -55,6 +56,7 @@ export async function cancelTrainingJob(input: TrainingStatusInput): Promise<Tra
 	if (!parsed.ok) return parsed.result;
 	const value = parsed.value;
 	if (value.providerType === 'prime_intellect') return cancelPrimePod(value);
+	if (value.providerType === 'modal') return cancelModalJob(value);
 
 	return success({
 		...value,
@@ -70,6 +72,7 @@ export async function pollTrainingJob(input: TrainingStatusInput): Promise<Train
 	if (!parsed.ok) return parsed.result;
 	const value = parsed.value;
 	if (value.providerType === 'prime_intellect') return pollPrimePod(value);
+	if (value.providerType === 'modal') return pollModalJob(value);
 
 	const status = statusFromProviderJobId(value.providerJobId);
 	return success({
