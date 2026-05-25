@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { launchModalTraining } from '../modal';
 import { launchPrimePod } from '../prime-intellect';
 
 export const trainingProviderTypes = [
@@ -92,7 +93,20 @@ export async function launchTrainingJob(input: TrainingLaunchInput): Promise<Tra
 
 const adapters: Record<TrainingProviderType, ProviderAdapter> = {
 	local: createQueuedAdapter('local', 'Local/demo runner'),
-	modal: createQueuedAdapter('modal', 'Modal training adapter'),
+	modal: {
+		type: 'modal',
+		label: 'Modal training adapter',
+		launch(input) {
+			return launchModalTraining({
+				runId: input.runId,
+				providerId: input.providerId,
+				baseUrl: input.baseUrl,
+				workspaceId: input.workspaceId,
+				providerConfigJson: input.providerConfigJson,
+				checkedAt: input.checkedAt,
+			});
+		},
+	},
 	prime_intellect: {
 		type: 'prime_intellect',
 		label: 'Prime Intellect compute pod adapter',

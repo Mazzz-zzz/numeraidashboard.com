@@ -17,6 +17,7 @@ export const authenticatedNavItems: readonly NavItem[] = [
 	{ href: '/builder', label: 'Builder' },
 	{ href: '/models', label: 'Models' },
 	{ href: '/launch', label: 'Launch' },
+	{ href: '/submissions', label: 'Submissions' },
 	docsNavItem,
 	{ href: '/settings', label: 'Settings' }
 ] as const;
