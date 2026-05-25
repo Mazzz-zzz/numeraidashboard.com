@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	launchTrainingJob,
 	normalizeTrainingProviderType,
@@ -98,7 +98,29 @@ describe('training provider adapters', () => {
 		});
 	});
 
-	it('fails Prime Intellect launches with missing config instead of throwing', async () => {
+	it('launches Prime Intellect direct pods when config is missing', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						items: [
+							{
+								cloudId: 'cloud-1',
+								gpuType: 'L40S_48GB',
+								socket: 'PCIe',
+								provider: 'runpod',
+								prices: { onDemand: 0.5 },
+							},
+						],
+					}),
+					{ status: 200 }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ id: 'pod-123', status: 'PROVISIONING' }), { status: 200 })
+			);
+
 		const result = await launchTrainingJob({
 			runId: 'run-prime',
 			providerId: 'provider-prime',
@@ -109,10 +131,98 @@ describe('training provider adapters', () => {
 		});
 
 		expect(result).toMatchObject({
+			ok: true,
+			status: 'queued',
+			providerJobId: 'pod-123',
+			error: null,
+		});
+		expect(fetchSpy).toHaveBeenNthCalledWith(
+			1,
+			'https://api.primeintellect.ai/api/v1/availability/gpus?gpu_type=L40S_48GB&gpu_count=1',
+			expect.any(Object)
+		);
+		expect(fetchSpy).toHaveBeenLastCalledWith(
+			'https://api.primeintellect.ai/api/v1/pods/',
+			expect.objectContaining({
+				body: expect.stringContaining('"image":"cuda_12_6_pytorch_2_7"'),
+			})
+		);
+		fetchSpy.mockRestore();
+	});
+
+	it('still requires a template id when Prime Intellect custom_template is explicit', async () => {
+		const result = await launchTrainingJob({
+			runId: 'run-prime',
+			providerId: 'provider-prime',
+			providerType: 'prime_intellect',
+			apiKey: 'test-token',
+			providerConfigJson: { primeIntellect: { image: 'custom_template' } },
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
 			ok: false,
 			status: 'failed',
 			error: 'Prime Intellect customTemplateId is required for custom_template pods',
 		});
+	});
+
+	it('skips Prime Intellect offers that are incompatible with direct CUDA images', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(
+				new Response(
+					JSON.stringify({
+						items: [
+							{
+								cloudId: 'gpu_1x_l40s',
+								gpuType: 'L40S_48GB',
+								socket: 'PCIe',
+								provider: 'massedcompute',
+								prices: { onDemand: 0.82 },
+							},
+							{
+								cloudId: 'l40s-48gb.1x',
+								gpuType: 'L40S_48GB',
+								socket: 'PCIe',
+								provider: 'crusoecloud',
+								prices: { onDemand: 1 },
+							},
+						],
+					}),
+					{ status: 200 }
+				)
+			)
+			.mockResolvedValueOnce(
+				new Response(JSON.stringify({ id: 'pod-crusoe', status: 'PROVISIONING' }), { status: 200 })
+			);
+
+		const result = await launchTrainingJob({
+			runId: 'run-prime',
+			providerId: 'provider-prime',
+			providerType: 'prime_intellect',
+			apiKey: 'test-token',
+			providerConfigJson: null,
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			providerJobId: 'pod-crusoe',
+		});
+		expect(fetchSpy).toHaveBeenLastCalledWith(
+			'https://api.primeintellect.ai/api/v1/pods/',
+			expect.objectContaining({
+				body: expect.stringContaining('"provider":{"type":"crusoecloud"}'),
+			})
+		);
+		expect(fetchSpy).toHaveBeenLastCalledWith(
+			'https://api.primeintellect.ai/api/v1/pods/',
+			expect.objectContaining({
+				body: expect.stringContaining('"cloudId":"l40s-48gb.1x"'),
+			})
+		);
+		fetchSpy.mockRestore();
 	});
 
 	it('fails unsupported provider types with the supported list', async () => {

@@ -14,6 +14,7 @@ export type TrainingActionInput = {
 	readonly runId: string;
 	readonly provider: ComputeProvider;
 	readonly providerJobId?: string | null;
+	readonly providerConfigJson?: unknown;
 };
 
 export type TrainingRunActionPatch = {
@@ -31,12 +32,12 @@ export function providerTypeArgument(provider: ComputeProvider): string {
 	return provider.providerType ?? 'custom';
 }
 
-function providerRuntimeArgs(provider: ComputeProvider) {
+function providerRuntimeArgs(provider: ComputeProvider, providerConfigJson?: unknown) {
 	return {
 		apiKeyRef: provider.apiKeyRef ?? null,
 		baseUrl: provider.baseUrl ?? null,
 		workspaceId: provider.workspaceId ?? null,
-		providerConfigJson: provider.credentialsJson ?? null,
+		providerConfigJson: providerConfigJson ?? provider.credentialsJson ?? null,
 	};
 }
 
@@ -95,7 +96,7 @@ export function trainingRunPatchFromAction(input: {
 		status,
 		...(startedAt !== undefined ? { startedAt } : {}),
 		...(finishedAt !== undefined ? { finishedAt } : {}),
-		...(input.action.logTail !== undefined ? { logTail: input.action.logTail ?? null } : {}),
+		...(input.action.logTail !== undefined || input.action.error ? { logTail: input.action.logTail ?? input.action.error ?? null } : {}),
 		...(input.action.costUsd !== undefined ? { costUsd: input.action.costUsd ?? null } : {}),
 		...(input.action.metricsJson !== undefined ? { metricsJson: input.action.metricsJson ?? null } : {}),
 		...(input.action.artifactUri !== undefined ? { artifactUri: input.action.artifactUri ?? null } : {}),
@@ -137,7 +138,7 @@ export async function startTrainingRun(
 		runId: input.runId,
 		providerId: input.provider.id,
 		providerType: providerTypeArgument(input.provider),
-		...providerRuntimeArgs(input.provider)
+		...providerRuntimeArgs(input.provider, input.providerConfigJson)
 	});
 	if (errors?.length) throw new Error(errors[0].message);
 	if (!data) throw new Error('startTraining returned no data');
@@ -154,7 +155,7 @@ export async function cancelTrainingRun(
 		providerId: input.provider.id,
 		providerType: providerTypeArgument(input.provider),
 		providerJobId: input.providerJobId ?? null,
-		...providerRuntimeArgs(input.provider)
+		...providerRuntimeArgs(input.provider, input.providerConfigJson)
 	});
 	if (errors?.length) throw new Error(errors[0].message);
 	if (!data) throw new Error('cancelTraining returned no data');
@@ -171,7 +172,7 @@ export async function pollTrainingRunStatus(
 		providerId: input.provider.id,
 		providerType: providerTypeArgument(input.provider),
 		providerJobId: input.providerJobId ?? null,
-		...providerRuntimeArgs(input.provider)
+		...providerRuntimeArgs(input.provider, input.providerConfigJson)
 	});
 	if (errors?.length) throw new Error(errors[0].message);
 	if (!data) throw new Error('pollTrainingStatus returned no data');
