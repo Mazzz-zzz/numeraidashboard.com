@@ -87,4 +87,26 @@ describe('training service', () => {
 		expect(patch.startedAt).toBe('2026-05-23T12:00:00.000Z');
 		expect(patch.finishedAt).toBeUndefined();
 	});
+
+	it('stores provider errors as training run log tails when no log is available', () => {
+		const patch = trainingRunPatchFromAction({
+			runId: 'run-1',
+			action: {
+				ok: false,
+				status: 'failed',
+				providerJobId: null,
+				checkedAt: '2026-05-23T13:00:00.000Z',
+				logTail: null,
+				error: 'No Prime Intellect availability found for L40S_48GBx1',
+				costUsd: null,
+				metricsJson: null,
+				artifactUri: null
+			}
+		});
+
+		expect(patch).toMatchObject({
+			status: 'failed',
+			logTail: 'No Prime Intellect availability found for L40S_48GBx1'
+		});
+	});
 });

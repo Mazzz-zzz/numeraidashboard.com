@@ -204,8 +204,17 @@
 		passkey: PasskeyNode
 	};
 
+	const availableProviderTemplates = $derived(providerTemplates.filter((template) => !providerTemplateInstalled(template)));
 	const nodes = $derived<Node[]>(buildNodes());
 	const edges = $derived<Edge[]>(buildEdges());
+
+	function providerTemplateInstalled(template: ProviderTemplate): boolean {
+		return providers.some((provider) => {
+			const providerType = provider.providerType as ProviderType | null;
+			if (template.providerType !== 'custom') return providerType === template.providerType;
+			return providerType === 'custom' && (provider.name ?? '').trim().toLowerCase() === template.name.toLowerCase();
+		});
+	}
 
 	function buildNodes(): Node[] {
 		const out: Node[] = [
@@ -252,7 +261,7 @@
 				}
 			});
 		});
-		providerTemplates.forEach((template, i) => {
+		availableProviderTemplates.forEach((template, i) => {
 			out.push({
 				id: providerTemplateNodeId(template),
 				type: 'add',
@@ -297,7 +306,7 @@
 				style: 'stroke: var(--text); stroke-width: 1.4;'
 			});
 		});
-		providerTemplates.forEach((template) => {
+		availableProviderTemplates.forEach((template) => {
 			out.push({
 				id: `e-hub-${template.id}`,
 				source: 'hub',
@@ -321,7 +330,7 @@
 		} else if (node.id === 'passkeys') {
 			drawer = { kind: 'passkeys' };
 		} else if (node.id.startsWith('add-provider-')) {
-			const template = providerTemplates.find((candidate) => providerTemplateNodeId(candidate) === node.id);
+			const template = availableProviderTemplates.find((candidate) => providerTemplateNodeId(candidate) === node.id);
 			if (template) {
 				applyProviderTemplate(template);
 				providerCheck = { status: 'idle', message: 'Not tested' };
