@@ -97,10 +97,9 @@ When data looks wrong, inspect the corresponding Amplify Data table/model:
 ## Current limitations
 
 - `start-training` uses a typed adapter boundary. Prime Intellect compute pod
-  launch is implemented, but it requires a Prime custom template id in
-  `ComputeProvider.credentialsJson.primeIntellect.customTemplateId` so the pod
-  has a startup entrypoint for the Numerai ML worker. Modal/SageMaker/custom
-  providers still return deterministic queued ids.
+  launch is implemented and defaults to `L40S_48GB` on a direct CUDA/PyTorch pod
+  image when no custom template is configured. Modal/SageMaker/custom providers
+  still return deterministic queued ids.
 - `cancel-training` and `poll-training-status` normalize statuses and payloads
   for the frontend. Prime Intellect cancel/poll API calls are implemented;
   Modal/SageMaker/custom provider calls still need to be implemented.
