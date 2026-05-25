@@ -40,7 +40,7 @@ describe('training provider adapters', () => {
 		expect(first.logTail).toContain('Local/demo runner accepted run run-123');
 	});
 
-	it.each(trainingProviderTypes.filter((type) => type !== 'local' && type !== 'prime_intellect'))(
+	it.each(trainingProviderTypes.filter((type) => type !== 'local' && type !== 'prime_intellect' && type !== 'modal'))(
 		'launches known %s providers through the adapter contract',
 		async (providerType) => {
 			const result = await launchTrainingJob({
@@ -57,6 +57,26 @@ describe('training provider adapters', () => {
 			expect(result.error).toBeNull();
 		}
 	);
+
+	it('prepares Modal training launches with explicit dry-run config', async () => {
+		const result = await launchTrainingJob({
+			runId: 'run-modal',
+			providerId: 'provider-modal',
+			providerType: 'modal',
+			providerConfigJson: {
+				modal: { dryRun: true, gpu: 'h100' },
+			},
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			status: 'queued',
+			error: null,
+		});
+		expect(result.providerJobId).toMatch(/^modal-dry-run-/);
+		expect(result.logTail).toContain('Modal dry run prepared h100');
+	});
 
 	it('prepares Prime Intellect compute pod launches with explicit dry-run config', async () => {
 		const result = await launchTrainingJob({
