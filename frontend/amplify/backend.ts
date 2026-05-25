@@ -10,6 +10,7 @@ import { pollTrainingStatus } from './functions/poll-training-status/resource';
 import { submitModel } from './functions/submit-model/resource';
 import { refreshRoundMetrics } from './functions/refresh-round-metrics/resource';
 import { syncPrimeTemplate } from './functions/sync-prime-template/resource';
+import { fetchNumeraiSubmissions } from './functions/fetch-numerai-submissions/resource';
 
 const backend = defineBackend({
 	auth,
@@ -22,6 +23,7 @@ const backend = defineBackend({
 	submitModel,
 	refreshRoundMetrics,
 	syncPrimeTemplate,
+	fetchNumeraiSubmissions,
 });
 
 const secretPolicy = new PolicyStatement({
@@ -35,3 +37,5 @@ backend.startTraining.resources.lambda.addToRolePolicy(secretPolicy);
 backend.pollTrainingStatus.resources.lambda.addToRolePolicy(secretPolicy);
 backend.cancelTraining.resources.lambda.addToRolePolicy(secretPolicy);
 backend.syncPrimeTemplate.resources.lambda.addToRolePolicy(secretPolicy);
+backend.submitModel.resources.lambda.addToRolePolicy(secretPolicy);
+backend.fetchNumeraiSubmissions.resources.lambda.addToRolePolicy(secretPolicy);

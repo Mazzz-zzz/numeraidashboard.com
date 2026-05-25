@@ -261,6 +261,124 @@ def run_training_job_h100(source_tarball_s3: str, hyperparams: dict, job_name: s
     return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
 
 
+# ── Inference function ─────────────────────────────────────────────────────
+
+
+def _run_inference_impl(
+    source_tarball_s3: str,
+    model_artifact_s3: str,
+    numerai_public_id: str,
+    numerai_secret_key: str,
+    numerai_model_id: str,
+    job_name: str,
+    s3_bucket: str = "openoptions-ml",
+):
+    """Run inference + Numerai upload for a single submission.
+
+    Downloads source code + the trained model artifact from S3, then delegates
+    to training.inference.run_inference. Writes progress and result JSON to S3
+    so the dashboard can poll job state without holding a Modal connection.
+    """
+    import json
+    import os
+    import sys
+    import tarfile
+    import tempfile
+    import time
+    import traceback
+
+    import boto3
+
+    start_time = time.time()
+    s3 = boto3.client("s3")
+
+    def write_s3_json(s3_key, data):
+        s3.put_object(
+            Bucket=s3_bucket, Key=s3_key,
+            Body=json.dumps(data, default=str),
+            ContentType="application/json",
+        )
+
+    def progress_callback(info):
+        try:
+            write_s3_json(f"jobs/{job_name}/progress.json", info)
+        except Exception as e:
+            print(f"Warning: progress write failed: {e}")
+
+    try:
+        src_parts = source_tarball_s3.replace("s3://", "").split("/", 1)
+        work_dir = tempfile.mkdtemp(prefix="ml_")
+        src_tar = os.path.join(work_dir, "source.tar.gz")
+        print(f"Downloading source from {source_tarball_s3}...")
+        s3.download_file(src_parts[0], src_parts[1], src_tar)
+        with tarfile.open(src_tar, "r:gz") as tar:
+            tar.extractall(work_dir)
+        os.unlink(src_tar)
+        sys.path.insert(0, work_dir)
+        os.chdir(work_dir)
+
+        art_parts = model_artifact_s3.replace("s3://", "").split("/", 1)
+        model_dir = tempfile.mkdtemp(prefix="model_")
+        model_tar = os.path.join(model_dir, "model.tar.gz")
+        print(f"Downloading model artifact from {model_artifact_s3}...")
+        s3.download_file(art_parts[0], art_parts[1], model_tar)
+        with tarfile.open(model_tar, "r:gz") as tar:
+            tar.extractall(model_dir)
+        os.unlink(model_tar)
+
+        from training.inference import run_inference
+
+        result = run_inference(
+            model_dir=model_dir,
+            numerai_public_id=numerai_public_id,
+            numerai_secret_key=numerai_secret_key,
+            numerai_model_id=numerai_model_id,
+            progress_callback=progress_callback,
+        )
+
+        elapsed = time.time() - start_time
+        result["elapsed_seconds"] = round(elapsed, 1)
+        write_s3_json(f"jobs/{job_name}/submission.json", result)
+        print(f"Inference complete! ({elapsed:.0f}s)")
+        return {"status": "completed", "result": result}
+    except Exception as e:
+        elapsed = time.time() - start_time
+        error_info = {
+            "status": "failed",
+            "error": str(e),
+            "traceback": traceback.format_exc(),
+            "elapsed_seconds": round(elapsed, 1),
+        }
+        print(f"Inference FAILED after {elapsed:.0f}s: {e}")
+        traceback.print_exc()
+        try:
+            write_s3_json(f"jobs/{job_name}/failure.json", error_info)
+        except Exception:
+            print("Warning: could not write failure.json to S3")
+        raise
+
+
+@app.function(image=ml_image, gpu="L4", timeout=3600, retries=0, secrets=[aws_secret, hf_secret])
+def run_inference_job(
+    source_tarball_s3: str,
+    model_artifact_s3: str,
+    numerai_public_id: str,
+    numerai_secret_key: str,
+    numerai_model_id: str,
+    job_name: str,
+    s3_bucket: str = "openoptions-ml",
+):
+    return _run_inference_impl(
+        source_tarball_s3=source_tarball_s3,
+        model_artifact_s3=model_artifact_s3,
+        numerai_public_id=numerai_public_id,
+        numerai_secret_key=numerai_secret_key,
+        numerai_model_id=numerai_model_id,
+        job_name=job_name,
+        s3_bucket=s3_bucket,
+    )
+
+
 # ── Web endpoint: allows Lambda to trigger jobs via HTTP POST ──────────
 
 GPU_FN_MAP = {
@@ -306,6 +424,105 @@ def spawn_training(body: dict):
         s3_bucket=s3_bucket,
     )
     return {"status": "spawned", "call_id": call.object_id}
+
+
+@app.function(image=ml_image, secrets=[aws_secret, hf_secret])
+@modal.fastapi_endpoint(method="POST")
+def spawn_inference(body: dict):
+    """HTTP endpoint that Lambda calls to run inference + Numerai upload.
+
+    POST body:
+        {
+            "job_name": "submit-<modelId>-<round>",
+            "model_artifact_s3": "s3://bucket/path/model.tar.gz",
+            "numerai_public_id": "...",
+            "numerai_secret_key": "...",
+            "numerai_model_id": "<slot uuid>",
+            "s3_bucket": "openoptions-ml"  // optional
+        }
+
+    Returns:
+        {"status": "spawned", "call_id": "..."}
+    """
+    job_name = body.get("job_name")
+    if not job_name:
+        return {"status": "error", "detail": "job_name is required"}
+
+    model_artifact_s3 = body.get("model_artifact_s3")
+    if not model_artifact_s3:
+        return {"status": "error", "detail": "model_artifact_s3 is required"}
+
+    numerai_public_id = body.get("numerai_public_id")
+    numerai_secret_key = body.get("numerai_secret_key")
+    numerai_model_id = body.get("numerai_model_id")
+    if not numerai_public_id or not numerai_secret_key or not numerai_model_id:
+        return {
+            "status": "error",
+            "detail": "numerai_public_id, numerai_secret_key, and numerai_model_id are required",
+        }
+
+    s3_bucket = body.get("s3_bucket", "openoptions-ml")
+    source_uri = f"s3://{s3_bucket}/code/ml-source.tar.gz"
+
+    call = run_inference_job.spawn(
+        source_tarball_s3=source_uri,
+        model_artifact_s3=model_artifact_s3,
+        numerai_public_id=numerai_public_id,
+        numerai_secret_key=numerai_secret_key,
+        numerai_model_id=numerai_model_id,
+        job_name=job_name,
+        s3_bucket=s3_bucket,
+    )
+    return {"status": "spawned", "call_id": call.object_id}
+
+
+@app.function(image=ml_image)
+@modal.fastapi_endpoint(method="POST")
+def job_status(body: dict):
+    """HTTP endpoint that returns the status of a Modal call by id.
+
+    POST body: {"call_id": "..."}
+    Returns: {"status": "running|completed|failed", ...}
+    """
+    call_id = body.get("call_id")
+    if not call_id:
+        return {"status": "error", "detail": "call_id is required"}
+
+    try:
+        call = modal.FunctionCall.from_id(call_id)
+    except Exception as e:
+        return {"status": "error", "detail": f"Unknown call_id: {e}"}
+
+    try:
+        result = call.get(timeout=0)
+    except modal.exception.OutputExpiredError:
+        return {"status": "failed", "error": "Modal output expired"}
+    except TimeoutError:
+        return {"status": "running"}
+    except Exception as e:
+        return {"status": "failed", "error": str(e)}
+
+    return {"status": "completed", "result": result}
+
+
+@app.function(image=ml_image)
+@modal.fastapi_endpoint(method="POST")
+def job_cancel(body: dict):
+    """HTTP endpoint that cancels a Modal call by id.
+
+    POST body: {"call_id": "..."}
+    """
+    call_id = body.get("call_id")
+    if not call_id:
+        return {"status": "error", "detail": "call_id is required"}
+
+    try:
+        call = modal.FunctionCall.from_id(call_id)
+        call.cancel()
+    except Exception as e:
+        return {"status": "error", "detail": str(e)}
+
+    return {"status": "cancelled"}
 
 
 # ── CLI entrypoint for testing ────────────────────────────────────────────

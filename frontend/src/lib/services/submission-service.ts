@@ -247,15 +247,26 @@ export async function refreshRoundMetricsForModel(
 
 export async function submitModel(input: SubmitModelDraft, client: Client = dataClient()) {
 	const roundNumber = parseRoundNumber(input.roundNumber);
+	const context = input.uploadEnabled
+		? await loadSubmissionContext(input, client)
+		: null;
+
 	const { data, errors } = await client.mutations.submitModel({
 		modelId: input.selectedModelId,
 		providerId: input.selectedProviderId || null,
+		providerType: context?.providerType ?? null,
 		numeraiAccountId: input.numeraiAccountId,
+		numeraiModelId: context?.numeraiModelId ?? null,
+		numeraiPublicId: context?.numeraiPublicId ?? null,
+		numeraiSecretRef: context?.numeraiSecretRef ?? null,
+		modelArtifactUri: context?.modelArtifactUri ?? null,
 		roundNumber,
 		predictionSet: input.predictionSet,
 		neutralizationPct: input.neutralizationPct,
 		validationMode: input.validationMode,
-		uploadEnabled: input.uploadEnabled
+		uploadEnabled: input.uploadEnabled,
+		baseUrl: context?.baseUrl ?? null,
+		providerConfigJson: context?.providerConfigJson ?? null
 	});
 	if (errors?.length) throw new Error(errors[0].message);
 	if (!data) throw new Error('submitModel returned no data');
@@ -270,4 +281,44 @@ export async function submitModel(input: SubmitModelDraft, client: Client = data
 		});
 	}
 	return { result, created };
+}
+
+type SubmissionContext = {
+	readonly providerType: string | null;
+	readonly numeraiModelId: string | null;
+	readonly numeraiPublicId: string | null;
+	readonly numeraiSecretRef: string | null;
+	readonly modelArtifactUri: string | null;
+	readonly baseUrl: string | null;
+	readonly providerConfigJson: unknown;
+};
+
+async function loadSubmissionContext(input: SubmitModelDraft, client: Client): Promise<SubmissionContext> {
+	const [model, provider, numeraiAccount] = await Promise.all([
+		input.selectedModelId
+			? client.models.ModelRegistryItem.get({ id: input.selectedModelId }).then((res) => res.data)
+			: Promise.resolve(null),
+		input.selectedProviderId
+			? client.models.ComputeProvider.get({ id: input.selectedProviderId }).then((res) => res.data)
+			: Promise.resolve(null),
+		input.numeraiAccountId
+			? client.models.NumeraiAccount.get({ id: input.numeraiAccountId }).then((res) => res.data)
+			: Promise.resolve(null)
+	]);
+
+	let modelArtifactUri: string | null = null;
+	if (model?.runId) {
+		const runRes = await client.models.TrainingRun.get({ id: model.runId });
+		modelArtifactUri = runRes.data?.artifactUri ?? null;
+	}
+
+	return {
+		providerType: provider?.providerType ?? null,
+		numeraiModelId: model?.numeraiModelId ?? null,
+		numeraiPublicId: numeraiAccount?.publicId ?? null,
+		numeraiSecretRef: numeraiAccount?.secretRef ?? null,
+		modelArtifactUri,
+		baseUrl: provider?.baseUrl ?? null,
+		providerConfigJson: provider?.credentialsJson ?? null
+	};
 }

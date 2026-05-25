@@ -7,6 +7,7 @@ import { pollTrainingStatus } from '../functions/poll-training-status/resource';
 import { submitModel } from '../functions/submit-model/resource';
 import { refreshRoundMetrics } from '../functions/refresh-round-metrics/resource';
 import { syncPrimeTemplate } from '../functions/sync-prime-template/resource';
+import { fetchNumeraiSubmissions } from '../functions/fetch-numerai-submissions/resource';
 
 const schema = a.schema({
 	Pipeline: a
@@ -193,6 +194,7 @@ const schema = a.schema({
 		ok: a.boolean().required(),
 		status: a.string().required(),
 		submissionId: a.string(),
+		providerJobId: a.string(),
 		roundNumber: a.integer(),
 		artifactUri: a.string(),
 		checkedAt: a.datetime().required(),
@@ -229,6 +231,13 @@ const schema = a.schema({
 		customTemplateId: a.string(),
 		dockerImage: a.string(),
 		providerConfigJson: a.json(),
+	}),
+
+	NumeraiSubmissionsResult: a.customType({
+		ok: a.boolean().required(),
+		checkedAt: a.datetime().required(),
+		error: a.string(),
+		modelsJson: a.string(),
 	}),
 
 	verifyNumeraiAccount: a
@@ -311,12 +320,19 @@ const schema = a.schema({
 		.arguments({
 			modelId: a.id().required(),
 			providerId: a.id(),
+			providerType: a.string(),
 			numeraiAccountId: a.id(),
+			numeraiModelId: a.string(),
+			numeraiPublicId: a.string(),
+			numeraiSecretRef: a.string(),
+			modelArtifactUri: a.string(),
 			roundNumber: a.integer(),
 			predictionSet: a.string().required(),
 			neutralizationPct: a.integer().required(),
 			validationMode: a.string().required(),
 			uploadEnabled: a.boolean().required(),
+			baseUrl: a.string(),
+			providerConfigJson: a.json(),
 		})
 		.returns(a.ref('SubmitModelResult'))
 		.authorization((allow) => [allow.authenticated()])
@@ -350,6 +366,19 @@ const schema = a.schema({
 		.returns(a.ref('PrimeTemplateSyncResult'))
 		.authorization((allow) => [allow.authenticated()])
 		.handler(a.handler.function(syncPrimeTemplate)),
+
+	fetchNumeraiSubmissions: a
+		.mutation()
+		.arguments({
+			publicId: a.string().required(),
+			secretKey: a.string(),
+			secretRef: a.string(),
+			numeraiModelIds: a.string().array().required(),
+			maxRounds: a.integer(),
+		})
+		.returns(a.ref('NumeraiSubmissionsResult'))
+		.authorization((allow) => [allow.authenticated()])
+		.handler(a.handler.function(fetchNumeraiSubmissions)),
 });
 
 export type Schema = ClientSchema<typeof schema>;
