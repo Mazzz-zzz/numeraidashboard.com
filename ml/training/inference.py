@@ -4,7 +4,8 @@ Loads a pre-trained model artifact from disk (extracted from S3),
 downloads live data, applies the same feature engineering as training,
 predicts, rank-normalizes, and uploads to Numerai.
 
-Used by bootstrap.py in inference mode when triggered by webhook/manual submit.
+Used by bootstrap.py in inference mode when triggered by the Amplify submission
+worker or a provider-side manual submit action.
 """
 
 from __future__ import annotations

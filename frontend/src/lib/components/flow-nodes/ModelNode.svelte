@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
-
-	type Stage = 'draft' | 'testing' | 'live' | 'retired';
+	import { modelStageLabels, type ModelStage } from '$lib/services/registry-service';
 
 	let {
 		data,
@@ -9,20 +8,13 @@
 	}: {
 		data: {
 			label: string;
-			stage: Stage;
+			stage: ModelStage;
 			numeraiModelId?: string | null;
 			corr?: number | null;
 			mmc?: number | null;
 		};
 		selected?: boolean;
 	} = $props();
-
-	const stageLabel: Record<Stage, string> = {
-		draft: 'Draft',
-		testing: 'Testing',
-		live: 'Live',
-		retired: 'Retired'
-	};
 
 	function fmt(n: number | null | undefined) {
 		return n == null ? '—' : n.toFixed(4);
@@ -31,7 +23,7 @@
 
 <div class="node" class:selected data-stage={data.stage}>
 	<Handle type="target" position={Position.Top} />
-	<span class="chip">{stageLabel[data.stage]}</span>
+	<span class="chip">{modelStageLabels[data.stage]}</span>
 	<strong class="title">{data.label}</strong>
 	{#if data.numeraiModelId}
 		<span class="sub mono">{data.numeraiModelId.slice(0, 8)}…</span>
@@ -80,10 +72,25 @@
 		background: var(--badge-green);
 		color: var(--green);
 	}
+	.node[data-stage='success'] .chip {
+		border-color: var(--green);
+		background: var(--badge-green);
+		color: var(--green);
+	}
 	.node[data-stage='testing'] .chip {
 		border-color: var(--orange);
 		background: var(--badge-orange);
 		color: var(--orange);
+	}
+	.node[data-stage='training'] .chip {
+		border-color: var(--orange);
+		background: var(--badge-orange);
+		color: var(--orange);
+	}
+	.node[data-stage='failed'] .chip {
+		border-color: var(--red);
+		background: var(--badge-red);
+		color: var(--red);
 	}
 
 	.title {

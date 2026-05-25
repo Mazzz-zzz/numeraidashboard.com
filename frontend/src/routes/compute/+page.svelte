@@ -1,22 +1,216 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
 	import AuthGate from '$lib/components/AuthGate.svelte';
-	import { computeProviders } from '$lib/product-data';
+	import { authState } from '$lib/auth';
+	import { addToast } from '$lib/stores';
+	import {
+		computeJobRows,
+		formatCurrency,
+		listComputeJobs,
+		listComputeProviders,
+		providerCards,
+		updateComputeJobStatus,
+		updateComputeProviderBudget,
+		type ComputeJob,
+		type ComputeProvider
+	} from '$lib/services/compute-service';
+	import {
+		cancelTrainingRun,
+		pollTrainingRunStatus,
+		startTrainingRun,
+		terminalActionTimestamp,
+		toComputeJobStatus,
+		updateTrainingRunFromAction
+	} from '$lib/services/training-service';
 
-	type ProviderId = (typeof computeProviders)[number]['id'];
-
-	let selectedProviderId = $state<ProviderId>('prime');
+	let selectedProviderId = $state('');
 	let monthlyBudget = $state(250);
 	let runCap = $state(18);
+	let maxConcurrentJobs = $state(4);
+	let loading = $state(true);
+	let busy = $state(false);
+	let providers = $state<ComputeProvider[]>([]);
+	let jobs = $state<ComputeJob[]>([]);
 
+	const cards = $derived(providerCards(providers));
 	const selectedProvider = $derived(
-		computeProviders.find((provider) => provider.id === selectedProviderId) ?? computeProviders[0]
+		cards.find((provider) => provider.id === selectedProviderId) ?? cards[0]
 	);
-	const queuedJobs = [
-		{ name: 'baseline smoke test', provider: 'Modal', spend: '$3.80', status: 'ready' },
-		{ name: 'candidate sweep x8', provider: 'Prime Intellect', spend: '$42.00', status: 'planned' },
-		{ name: 'production validation', provider: 'SageMaker', spend: '$15.40', status: 'running' },
-		{ name: 'local compare pass', provider: 'Local GPU', spend: '$0.00', status: 'waiting' }
-	] as const;
+	const selectedProviderRecord = $derived(
+		providers.find((provider) => provider.id === selectedProviderId) ?? providers[0]
+	);
+	const queuedJobs = $derived(computeJobRows(jobs, providers));
+
+	onMount(() => {
+		if ($authState.user) void loadCompute();
+	});
+
+	$effect(() => {
+		if ($authState.user && loading) void loadCompute();
+	});
+
+	async function loadCompute() {
+		loading = true;
+		try {
+			const [providerRows, jobRows] = await Promise.all([listComputeProviders(), listComputeJobs()]);
+			providers = providerRows;
+			jobs = jobRows;
+			const firstProvider = providerRows[0];
+			if (firstProvider) selectProvider(firstProvider.id);
+		} catch (error) {
+			console.error(error);
+			addToast('Compute records could not load.', 'error');
+		} finally {
+			loading = false;
+		}
+	}
+
+	function selectProvider(providerId: string) {
+		selectedProviderId = providerId;
+		const provider = providers.find((item) => item.id === providerId);
+		monthlyBudget = provider?.monthlyBudgetUsd ?? 250;
+		runCap = provider?.defaultRunCapUsd ?? 18;
+		maxConcurrentJobs = provider?.maxConcurrentJobs ?? 4;
+	}
+
+	async function saveBudgetControls() {
+		if (!selectedProviderRecord) {
+			addToast('Add a compute provider in Settings first.', 'error');
+			return;
+		}
+		busy = true;
+		try {
+			const updated = await updateComputeProviderBudget({
+				providerId: selectedProviderRecord.id,
+				monthlyBudgetUsd: monthlyBudget,
+				defaultRunCapUsd: runCap,
+				maxConcurrentJobs
+			});
+			providers = providers.map((provider) => (provider.id === updated.id ? updated : provider));
+			addToast('Compute budget controls saved.', 'success');
+		} catch (error) {
+			console.error(error);
+			addToast('Compute budget controls could not be saved.', 'error');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function cancelJob(jobId: string) {
+		busy = true;
+		try {
+			const job = jobs.find((item) => item.id === jobId);
+			const provider = providers.find((item) => item.id === job?.providerId);
+			const action =
+				job?.runId && provider
+					? await cancelTrainingRun({
+							runId: job.runId,
+							provider,
+							providerJobId: job.providerJobId ?? null
+						})
+					: null;
+			if (action && !action.ok) throw new Error(action.error ?? 'Cancel request failed');
+			const updated = await updateComputeJobStatus({
+				jobId,
+				status: toComputeJobStatus(action?.status ?? 'cancelled'),
+				finishedAt: action ? terminalActionTimestamp(action.status, action.checkedAt) : new Date().toISOString(),
+				providerJobId: action?.providerJobId ?? job?.providerJobId ?? null,
+				logTail: action?.logTail ?? null,
+				actualCostUsd: action?.costUsd ?? null
+			});
+			if (action && job?.runId) {
+				await updateTrainingRunFromAction({
+					runId: job.runId,
+					action,
+					currentStartedAt: job.startedAt ?? null
+				});
+			}
+			jobs = jobs.map((item) => (item.id === updated.id ? updated : item));
+			addToast('Compute job cancelled.', 'success');
+		} catch (error) {
+			console.error(error);
+			addToast('Compute job could not be cancelled.', 'error');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function retryJob(jobId: string) {
+		busy = true;
+		try {
+			const job = jobs.find((item) => item.id === jobId);
+			const provider = providers.find((item) => item.id === job?.providerId);
+			if (!job?.runId || !provider) {
+				addToast('Retry needs a training run and provider.', 'error');
+				return;
+			}
+			const action = await startTrainingRun({ runId: job.runId, provider });
+			if (!action.ok) throw new Error(action.error ?? 'Retry request failed');
+			const updated = await updateComputeJobStatus({
+				jobId,
+				status: toComputeJobStatus(action.status),
+				startedAt: toComputeJobStatus(action.status) === 'running' ? action.checkedAt : undefined,
+				finishedAt: terminalActionTimestamp(action.status, action.checkedAt),
+				providerJobId: action.providerJobId ?? null,
+				logTail: action.logTail ?? null,
+				actualCostUsd: action.costUsd ?? null
+			});
+			await updateTrainingRunFromAction({
+				runId: job.runId,
+				action,
+				currentStartedAt: job.startedAt ?? null
+			});
+			jobs = jobs.map((item) => (item.id === updated.id ? updated : item));
+			addToast('Compute job requeued.', 'success');
+		} catch (error) {
+			console.error(error);
+			addToast('Compute job could not be retried.', 'error');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function refreshJob(jobId: string) {
+		busy = true;
+		try {
+			const job = jobs.find((item) => item.id === jobId);
+			const provider = providers.find((item) => item.id === job?.providerId);
+			if (!job?.runId || !provider) {
+				addToast('Status refresh needs a training run and provider.', 'error');
+				return;
+			}
+			const action = await pollTrainingRunStatus({
+				runId: job.runId,
+				provider,
+				providerJobId: job.providerJobId ?? null
+			});
+			if (!action.ok) throw new Error(action.error ?? 'Status refresh failed');
+			const updated = await updateComputeJobStatus({
+				jobId,
+				status: toComputeJobStatus(action.status),
+				startedAt:
+					toComputeJobStatus(action.status) === 'running'
+						? (job.startedAt ?? action.checkedAt)
+						: job.startedAt,
+				finishedAt: terminalActionTimestamp(action.status, action.checkedAt),
+				providerJobId: action.providerJobId ?? null,
+				logTail: action.logTail ?? null,
+				actualCostUsd: action.costUsd ?? null
+			});
+			await updateTrainingRunFromAction({
+				runId: job.runId,
+				action,
+				currentStartedAt: job.startedAt ?? null
+			});
+			jobs = jobs.map((item) => (item.id === updated.id ? updated : item));
+			addToast('Compute job status refreshed.', 'success');
+		} catch (error) {
+			console.error(error);
+			addToast('Compute job status could not be refreshed.', 'error');
+		} finally {
+			busy = false;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -31,23 +225,26 @@
 			<h1>Choose the route before launching the sweep.</h1>
 			<p>
 				Compute is the cost control plane for Builder. Compare providers, set budget caps, and
-				see what is queued before a run hits the backend.
+				see queued jobs from the Amplify workspace before a run hits a provider.
 			</p>
 		</div>
 		<div class="budget-card">
 			<span>Monthly cap</span>
-			<strong>${monthlyBudget}</strong>
+			<strong>{formatCurrency(monthlyBudget)}</strong>
 			<input type="range" min="50" max="1000" step="25" bind:value={monthlyBudget} />
+			<button type="button" disabled={busy || loading || !selectedProvider} onclick={saveBudgetControls}>
+				Save limits
+			</button>
 		</div>
 	</header>
 
 	<div class="compute-grid">
 		<section class="provider-grid" aria-label="Compute providers">
-			{#each computeProviders as provider}
+			{#each cards as provider}
 				<button
 					type="button"
 					class:active={selectedProviderId === provider.id}
-					onclick={() => (selectedProviderId = provider.id)}
+					onclick={() => selectProvider(provider.id)}
 				>
 					<span>{provider.status}</span>
 					<strong>{provider.name}</strong>
@@ -55,31 +252,38 @@
 					<p>{provider.body}</p>
 				</button>
 			{/each}
+			{#if !cards.length}
+				<div class="empty-card">
+					<span>No providers</span>
+					<strong>Add compute in Settings</strong>
+					<p>Provider cards appear here after you connect Modal, SageMaker, Prime Intellect, local, or custom compute.</p>
+				</div>
+			{/if}
 		</section>
 
 		<aside class="detail-panel">
 			<section class="panel">
 				<p class="eyebrow">Selected provider</p>
-				<h2>{selectedProvider.name}</h2>
-				<p>{selectedProvider.body}</p>
+				<h2>{selectedProvider?.name ?? 'No provider selected'}</h2>
+				<p>{selectedProvider?.body ?? 'Add a provider in Settings to enable compute controls.'}</p>
 				<div class="facts">
-					<div><span>Cost</span><strong>{selectedProvider.cost}</strong></div>
-					<div><span>Speed</span><strong>{selectedProvider.speed}</strong></div>
-					<div><span>Status</span><strong>{selectedProvider.status}</strong></div>
+					<div><span>Monthly</span><strong>{formatCurrency(selectedProvider?.monthlyBudgetUsd)}</strong></div>
+					<div><span>Run cap</span><strong>{formatCurrency(selectedProvider?.defaultRunCapUsd)}</strong></div>
+					<div><span>Status</span><strong>{selectedProvider?.status ?? 'unset'}</strong></div>
 				</div>
 			</section>
 
 			<section class="panel">
 				<h2>Run limits</h2>
 				<label>
-					<span>Max runs per sweep</span>
-					<input type="range" min="1" max="32" bind:value={runCap} />
-					<strong>{runCap} runs</strong>
+					<span>Max concurrent jobs</span>
+					<input type="range" min="1" max="32" bind:value={maxConcurrentJobs} />
+					<strong>{maxConcurrentJobs} jobs</strong>
 				</label>
 				<label>
 					<span>Default spend cap</span>
-					<input type="range" min="5" max="250" step="5" bind:value={monthlyBudget} />
-					<strong>${monthlyBudget}</strong>
+					<input type="range" min="5" max="250" step="5" bind:value={runCap} />
+					<strong>{formatCurrency(runCap)}</strong>
 				</label>
 			</section>
 		</aside>
@@ -94,17 +298,35 @@
 			<div class="row head">
 				<span>Job</span>
 				<span>Provider</span>
-				<span>Spend</span>
+				<span>Started</span>
 				<span>Status</span>
+				<span>Actions</span>
 			</div>
 			{#each queuedJobs as job}
 				<div class="row">
 					<span>{job.name}</span>
 					<span>{job.provider}</span>
-					<span>{job.spend}</span>
+					<span>{job.startedAt}</span>
 					<span>{job.status}</span>
+					<span class="row-actions">
+						<button type="button" disabled={busy || !job.runId || !job.providerId} onclick={() => refreshJob(job.id)}>
+							Refresh
+						</button>
+						<button type="button" disabled={busy || !job.canCancel} onclick={() => cancelJob(job.id)}>
+							Cancel
+						</button>
+						<button type="button" disabled={busy || !job.canRetry} onclick={() => retryJob(job.id)}>
+							Retry
+						</button>
+					</span>
 				</div>
 			{/each}
+			{#if !queuedJobs.length}
+				<div class="row empty-row">
+					<span>No compute jobs queued yet.</span>
+					<span>Queue a sweep from Builder to create planned jobs.</span>
+				</div>
+			{/if}
 		</div>
 	</section>
 </section>
@@ -164,6 +386,7 @@
 	.budget-card,
 	.panel,
 	.provider-grid button,
+	.empty-card,
 	.job-table {
 		border: 1px solid var(--border);
 		border-radius: 8px;
@@ -200,7 +423,27 @@
 		font: inherit;
 	}
 
-	.provider-grid button {
+	button:disabled {
+		cursor: not-allowed;
+		opacity: 0.55;
+	}
+
+	.budget-card button,
+	.row-actions button {
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: #fff;
+		color: var(--text);
+		cursor: pointer;
+		font-weight: 720;
+	}
+
+	.budget-card button {
+		min-height: 2.35rem;
+	}
+
+	.provider-grid button,
+	.empty-card {
 		display: grid;
 		gap: 0.5rem;
 		min-height: 220px;
@@ -208,6 +451,10 @@
 		color: var(--text);
 		cursor: pointer;
 		text-align: left;
+	}
+
+	.empty-card {
+		align-content: start;
 	}
 
 	.provider-grid button.active {
@@ -221,6 +468,7 @@
 
 	.provider-grid small,
 	.provider-grid p,
+	.empty-card p,
 	.panel p {
 		color: var(--text-secondary);
 		line-height: 1.55;
@@ -293,14 +541,32 @@
 
 	.row {
 		display: grid;
-		grid-template-columns: 1.25fr 1fr 0.7fr 0.8fr;
+		grid-template-columns: 1.25fr 1fr 1fr 0.8fr 1fr;
 		gap: 1rem;
+		align-items: center;
 		padding: 0.85rem 1rem;
 		border-bottom: 1px solid var(--border-light);
 	}
 
 	.row:last-child {
 		border-bottom: none;
+	}
+
+	.row-actions {
+		display: flex;
+		gap: 0.4rem;
+		flex-wrap: wrap;
+	}
+
+	.row-actions button {
+		min-height: 2rem;
+		padding: 0 0.55rem;
+		font-size: 0.78rem;
+	}
+
+	.empty-row {
+		grid-template-columns: 1fr;
+		color: var(--text-secondary);
 	}
 
 	@media (max-width: 980px) {
