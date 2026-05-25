@@ -1,13 +1,59 @@
 import type { Schema } from '../../data/resource';
+import { GetParameterCommand, PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { createHash } from 'node:crypto';
 
 type Args = Schema['verifyComputeProvider']['args'];
-type Result = { ok: boolean; verifiedAt: string | null; error: string | null };
+type Result = {
+	ok: boolean;
+	verifiedAt: string | null;
+	error: string | null;
+	secretRef: string | null;
+	apiKeyRef: string | null;
+	apiSecretRef: string | null;
+};
+
+const ssm = new SSMClient({});
 
 export const handler: Schema['verifyComputeProvider']['functionHandler'] = async (event) => {
-	const err = await verifyByType(event.arguments);
-	if (err) return { ok: false, verifiedAt: null, error: err };
-	return { ok: true, verifiedAt: new Date().toISOString(), error: null };
+	const material = await resolveProviderSecrets(event.arguments, ownerSub(event));
+	const args = { ...event.arguments, apiKey: material.apiKey, apiSecret: material.apiSecret };
+	const err = await verifyByType(args);
+	if (err) {
+		return {
+			ok: false,
+			verifiedAt: null,
+			error: err,
+			secretRef: null,
+			apiKeyRef: material.apiKeyRef,
+			apiSecretRef: material.apiSecretRef,
+		};
+	}
+	return {
+		ok: true,
+		verifiedAt: new Date().toISOString(),
+		error: null,
+		secretRef: null,
+		apiKeyRef: material.apiKeyRef,
+		apiSecretRef: material.apiSecretRef,
+	};
 };
+
+async function resolveProviderSecrets(a: Args, owner: string) {
+	const fingerprint = `${a.providerType}:${a.workspaceId ?? ''}:${a.baseUrl ?? ''}:${a.awsRoleArn ?? ''}`;
+	const apiKeyRef = a.apiKeyRef ?? (a.apiKey ? secretPath(owner, 'provider', fingerprint, 'api-key') : null);
+	const apiSecretRef =
+		a.apiSecretRef ?? (a.apiSecret ? secretPath(owner, 'provider', fingerprint, 'api-secret') : null);
+
+	if (a.apiKey && apiKeyRef) await putSecret(apiKeyRef, a.apiKey);
+	if (a.apiSecret && apiSecretRef) await putSecret(apiSecretRef, a.apiSecret);
+
+	return {
+		apiKey: a.apiKey ?? (apiKeyRef ? await getSecret(apiKeyRef) : null),
+		apiSecret: a.apiSecret ?? (apiSecretRef ? await getSecret(apiSecretRef) : null),
+		apiKeyRef,
+		apiSecretRef,
+	};
+}
 
 async function verifyByType(a: Args): Promise<string | null> {
 	switch (a.providerType) {
@@ -30,10 +76,9 @@ async function verifyPrimeIntellect(a: Args): Promise<string | null> {
 	if (!a.apiKey) return 'apiKey is required';
 	const base = (a.baseUrl ?? '').replace(/\/$/, '') || 'https://api.primeintellect.ai';
 	try {
-		const resp = await fetch(`${base}/api/v1/me`, {
+		const resp = await fetch(`${base}/api/v1/pods/?offset=0&limit=1`, {
 			headers: { Authorization: `Bearer ${a.apiKey}` },
 		});
-		if (resp.status === 404) return null;
 		if (!resp.ok) return `Prime Intellect responded ${resp.status}`;
 		return null;
 	} catch (e) {
@@ -54,4 +99,31 @@ async function verifySagemaker(a: Args): Promise<string | null> {
 		return 'awsRoleArn does not look like a valid IAM role ARN';
 	if (!a.awsRegion) return 'awsRegion is required';
 	return null;
+}
+
+function ownerSub(event: { identity?: unknown }): string {
+	const identity = event.identity as { sub?: string; claims?: { sub?: string } } | undefined;
+	return identity?.sub ?? identity?.claims?.sub ?? 'unknown-user';
+}
+
+function secretPath(owner: string, scope: string, key: string, name: string): string {
+	const digest = createHash('sha256').update(`${scope}:${key}`).digest('hex').slice(0, 24);
+	return `/numeraidashboard/${owner}/${scope}/${digest}/${name}`;
+}
+
+async function putSecret(name: string, value: string): Promise<void> {
+	await ssm.send(
+		new PutParameterCommand({
+			Name: name,
+			Value: value,
+			Type: 'SecureString',
+			Overwrite: true,
+		})
+	);
+}
+
+async function getSecret(name: string): Promise<string> {
+	const result = await ssm.send(new GetParameterCommand({ Name: name, WithDecryption: true }));
+	if (!result.Parameter?.Value) throw new Error(`Secret reference not found: ${name}`);
+	return result.Parameter.Value;
 }

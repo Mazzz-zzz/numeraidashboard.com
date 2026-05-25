@@ -4,6 +4,7 @@
 	import { goto } from '$app/navigation';
 	import Toast from '$lib/components/Toast.svelte';
 	import { authState, refreshAuth, signOut } from '$lib/auth';
+	import { isFullbleedRoute, isNavItemActive, primaryNavItems } from '$lib/navigation';
 
 	let { children } = $props();
 	let menuOpen = $state(false);
@@ -34,13 +35,11 @@
 			</a>
 
 			<div class="nav-links" class:open={menuOpen}>
-				<a href="/" class:active={$page.url.pathname === '/'} onclick={closeMenu}>Overview</a>
-				{#if $authState.user}
-					<a href="/builder" class:active={$page.url.pathname === '/builder'} onclick={closeMenu}>Builder</a>
-					<a href="/models" class:active={$page.url.pathname === '/models'} onclick={closeMenu}>Models</a>
-					<a href="/evolution" class:active={$page.url.pathname === '/evolution'} onclick={closeMenu}>Evolution</a>
-					<a href="/compute" class:active={$page.url.pathname === '/compute'} onclick={closeMenu}>Compute</a>
-				{/if}
+				{#each primaryNavItems(!!$authState.user) as item}
+					<a href={item.href} class:active={isNavItemActive($page.url.pathname, item.href)} onclick={closeMenu}>
+						{item.label}
+					</a>
+				{/each}
 			</div>
 
 			<div class="nav-top-right">
@@ -58,7 +57,6 @@
 						</button>
 						{#if userMenuOpen}
 							<div class="user-dropdown" role="menu">
-								<a href="/settings" role="menuitem" onclick={closeMenu}>Settings</a>
 								<button type="button" role="menuitem" onclick={handleSignOut}>Sign out</button>
 							</div>
 						{/if}
@@ -85,7 +83,7 @@
 		<button class="nav-overlay" onclick={closeMenu} aria-label="Close menu" tabindex="-1"></button>
 	{/if}
 
-	<main class:fullbleed={$page.url.pathname.startsWith('/settings') || $page.url.pathname.startsWith('/evolution')}>
+	<main class:fullbleed={isFullbleedRoute($page.url.pathname)}>
 		{@render children()}
 	</main>
 </div>
@@ -254,8 +252,7 @@
 		z-index: 60;
 	}
 
-	.user-dropdown button,
-	.user-dropdown a {
+	.user-dropdown button {
 		display: block;
 		width: 100%;
 		text-align: left;
@@ -269,8 +266,7 @@
 		border-radius: 4px;
 		box-sizing: border-box;
 	}
-	.user-dropdown button:hover,
-	.user-dropdown a:hover { background: var(--hover-bg); }
+	.user-dropdown button:hover { background: var(--hover-bg); }
 
 	@media (max-width: 480px) {
 		.user-email { max-width: 6rem; }
