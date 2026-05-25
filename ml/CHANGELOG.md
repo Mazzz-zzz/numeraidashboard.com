@@ -35,14 +35,13 @@ match previous behavior):
 
 All features toggleable via Modal CLI `--extra` or the frontend deploy form.
 
-### New: Frontend support for all model types
-**Files:** `frontend/src/routes/ml/+page.svelte`, `frontend/src/routes/signals/+page.svelte`, `frontend/src/lib/components/ml/TrainConfigModal.svelte`, `backend/app/routers/ml.py`
+### New: model configuration support for all model types
+**Files:** `training/trainer.py`, `sagemaker/modal_runner.py`, `models/*`
 
-Added MLP and FT-Transformer to all model type dropdowns. When MLP or FT-T is
-selected, the deploy form shows model-specific fields (dropout, weight decay,
-mixup alpha, warmup epochs, hidden dims, SWA checkbox, multi-head checkbox).
-Hyperparams flow through the full API pipeline: frontend → backend → Modal →
-trainer → model constructor.
+Added MLP and FT-Transformer configuration paths for workload launchers.
+Model-specific fields include dropout, weight decay, mixup alpha, warmup epochs,
+hidden dims, SWA, and multi-head mode. Hyperparameters should now flow from the
+Amplify/provider worker path into the trainer and model constructor.
 
 ### New: model_kwargs passthrough in trainer
 **Files:** `training/trainer.py`

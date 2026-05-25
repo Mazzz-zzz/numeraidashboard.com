@@ -1,4 +1,21 @@
 <script lang="ts">
+	import { onMount } from 'svelte';
+	import { authState } from '$lib/auth';
+	import {
+		countActiveWork,
+		latestSubmission,
+		nextDashboardAction,
+		summarizeComputeConnection,
+		summarizeNumeraiConnection
+	} from '$lib/dashboard';
+	import { seedDemoWorkspace } from '$lib/services/demo-seed-service';
+	import { loadDashboardData } from '$lib/services/dashboard-service';
+	import type { NumeraiAccount } from '$lib/services/account-service';
+	import type { ComputeProvider, ComputeJob } from '$lib/services/compute-service';
+	import type { TrainingRun } from '$lib/services/pipeline-service';
+	import type { ModelRegistryItem } from '$lib/services/registry-service';
+	import { addToast } from '$lib/stores';
+
 	const modules = [
 		{
 			kicker: 'Builder',
@@ -13,13 +30,6 @@
 			body: 'Track production, testing, and draft models with live performance, lineage, and promote/retire actions.',
 			href: '/models',
 			cta: 'Review models'
-		},
-		{
-			kicker: 'Compute',
-			title: 'Control provider spend',
-			body: 'Compare Prime Intellect, Modal, SageMaker, and local GPU routes before launching another sweep.',
-			href: '/compute',
-			cta: 'View compute'
 		}
 	] as const;
 
@@ -128,6 +138,90 @@
 	const activeTest = $derived(
 		testTemplates.find((template) => template.id === activeTestId) ?? testTemplates[0]
 	);
+
+	let numeraiAccounts = $state<NumeraiAccount[]>([]);
+	let computeProviders = $state<ComputeProvider[]>([]);
+	let trainingRuns = $state<TrainingRun[]>([]);
+	let computeJobs = $state<ComputeJob[]>([]);
+	let registeredModels = $state<ModelRegistryItem[]>([]);
+	let dashboardLoading = $state(false);
+	let dashboardLoaded = $state(false);
+	let seedBusy = $state(false);
+
+	onMount(() => {
+		if ($authState.user) void loadDashboard();
+	});
+
+	$effect(() => {
+		if ($authState.user && !dashboardLoaded && !dashboardLoading) void loadDashboard();
+		if (!$authState.user) dashboardLoaded = false;
+	});
+
+	async function loadDashboard() {
+		dashboardLoading = true;
+		try {
+			const data = await loadDashboardData();
+			numeraiAccounts = data.numeraiAccounts;
+			computeProviders = data.computeProviders;
+			trainingRuns = data.trainingRuns;
+			computeJobs = data.computeJobs;
+			registeredModels = data.registeredModels;
+			dashboardLoaded = true;
+		} catch (e) {
+			addToast(asMessage(e, 'Failed to load dashboard'), 'error');
+			dashboardLoaded = true;
+		} finally {
+			dashboardLoading = false;
+		}
+	}
+
+	async function seedDemo() {
+		seedBusy = true;
+		try {
+			const summary = await seedDemoWorkspace();
+			await loadDashboard();
+			addToast(
+				summary.created > 0
+					? `Demo workspace seeded with ${summary.created} records.`
+					: 'Demo workspace already exists.',
+				'success'
+			);
+		} catch (e) {
+			addToast(asMessage(e, 'Failed to seed demo workspace'), 'error');
+		} finally {
+			seedBusy = false;
+		}
+	}
+
+	const numeraiSummary = $derived(summarizeNumeraiConnection(numeraiAccounts));
+	const computeSummary = $derived(summarizeComputeConnection(computeProviders));
+	const activeTrainingCount = $derived(countActiveWork(trainingRuns));
+	const activeJobCount = $derived(countActiveWork(computeJobs));
+	const activeWorkCount = $derived(activeTrainingCount + activeJobCount);
+	const latestSubmittedModel = $derived(latestSubmission(registeredModels));
+	const nextAction = $derived(
+		nextDashboardAction({
+			numerai: numeraiSummary,
+			compute: computeSummary,
+			modelCount: registeredModels.length,
+			activeWorkCount
+		})
+	);
+	const recentRuns = $derived(trainingRuns.slice(0, 4));
+	const recentJobs = $derived(computeJobs.slice(0, 4));
+
+	function asMessage(e: unknown, fallback: string) {
+		return e instanceof Error ? e.message : fallback;
+	}
+
+	function fmtDate(value: string | null | undefined) {
+		if (!value) return 'No timestamp';
+		try {
+			return new Date(value).toLocaleString();
+		} catch {
+			return value;
+		}
+	}
 </script>
 
 <svelte:head>
@@ -137,6 +231,134 @@
 	/>
 </svelte:head>
 
+{#if $authState.user}
+	<section class="dashboard-page" aria-labelledby="dashboard-title">
+		<header class="dashboard-head">
+			<div>
+				<p class="eyebrow">Dashboard</p>
+				<h1 id="dashboard-title">Operate today’s Numerai work.</h1>
+				<p class="lede">
+					Start with account and compute readiness, then watch active training, provider jobs,
+					model registry state, and the next submission step from the same page.
+				</p>
+			</div>
+			<div class="head-actions">
+				<a class="primary-action" href={nextAction.href}>{nextAction.label}</a>
+				<button type="button" class="secondary-action" onclick={seedDemo} disabled={seedBusy}>
+					{seedBusy ? 'Seeding…' : 'Seed demo'}
+				</button>
+			</div>
+		</header>
+
+		{#if dashboardLoading && !dashboardLoaded}
+			<p class="muted">Loading dashboard…</p>
+		{/if}
+
+		<div class="connection-grid" aria-label="Connection status">
+			<a class="status-card" class:good={numeraiSummary.tone === 'good'} href="/settings">
+				<span>Numerai</span>
+				<strong>{numeraiSummary.label}</strong>
+				<p>{numeraiSummary.detail}</p>
+			</a>
+			<a class="status-card" class:good={computeSummary.tone === 'good'} href="/settings">
+				<span>Compute</span>
+				<strong>{computeSummary.label}</strong>
+				<p>{computeSummary.detail}</p>
+			</a>
+		</div>
+
+		<div class="dashboard-grid">
+			<section class="ops-panel">
+				<div class="panel-title">
+					<span>Active work</span>
+					<strong>{activeWorkCount}</strong>
+				</div>
+				<div class="metric-grid">
+					<div class="metric">
+						<span>Training runs</span>
+						<strong>{activeTrainingCount}</strong>
+					</div>
+					<div class="metric">
+						<span>Compute jobs</span>
+						<strong>{activeJobCount}</strong>
+					</div>
+					<div class="metric">
+						<span>Models</span>
+						<strong>{registeredModels.length}</strong>
+					</div>
+				</div>
+			</section>
+
+			<section class="ops-panel">
+				<div class="panel-title">
+					<span>Latest submission</span>
+					<strong>{latestSubmittedModel?.name ?? 'None yet'}</strong>
+				</div>
+				<p class="panel-copy">
+					{#if latestSubmittedModel}
+						Round {latestSubmittedModel.lastSubmittedRound ?? 'unknown'} · {fmtDate(latestSubmittedModel.lastSubmittedAt)}
+					{:else}
+						Register a model and submit predictions from Models once Numerai and compute are ready.
+					{/if}
+				</p>
+			</section>
+
+			<section class="ops-panel wide">
+				<div class="panel-title">
+					<span>Recent training runs</span>
+					<a href="/builder">Open builder</a>
+				</div>
+				{#if recentRuns.length === 0}
+					<p class="panel-copy">No training runs are tracked yet.</p>
+				{:else}
+					<div class="run-table">
+						<div class="row head">
+							<span>Run</span>
+							<span>Status</span>
+							<span>Cost</span>
+							<span>Started</span>
+						</div>
+						{#each recentRuns as run}
+							<div class="row">
+								<span>{run.modelTemplate ?? 'custom'}</span>
+								<span>{run.status ?? 'unknown'}</span>
+								<span>{run.costUsd == null ? '—' : `$${run.costUsd.toFixed(2)}`}</span>
+								<span>{fmtDate(run.startedAt)}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</section>
+
+			<section class="ops-panel wide">
+				<div class="panel-title">
+					<span>Recent compute jobs</span>
+					<a href="/settings">Manage providers</a>
+				</div>
+				{#if recentJobs.length === 0}
+					<p class="panel-copy">No provider jobs are tracked yet.</p>
+				{:else}
+					<div class="run-table">
+						<div class="row head">
+							<span>Job</span>
+							<span>Status</span>
+							<span>Estimate</span>
+							<span>Started</span>
+						</div>
+						{#each recentJobs as job}
+							<div class="row">
+								<span>{job.name}</span>
+								<span>{job.status ?? 'unknown'}</span>
+								<span>{job.estimatedCostUsd == null ? '—' : `$${job.estimatedCostUsd.toFixed(2)}`}</span>
+								<span>{fmtDate(job.startedAt)}</span>
+							</div>
+						{/each}
+					</div>
+				{/if}
+			</section>
+		</div>
+	</section>
+{:else}
 <div class="home">
 	<section class="hero" aria-labelledby="home-title">
 		<div class="hero-copy">
@@ -310,8 +532,117 @@
 		</div>
 	</section>
 </div>
+{/if}
 
 <style>
+	.dashboard-page {
+		display: flex;
+		flex-direction: column;
+		gap: 1.5rem;
+		padding: 2rem 0 4rem;
+	}
+
+	.dashboard-head {
+		display: flex;
+		align-items: flex-end;
+		justify-content: space-between;
+		gap: 2rem;
+		padding-bottom: 2rem;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.head-actions {
+		display: flex;
+		flex-wrap: wrap;
+		justify-content: flex-end;
+		gap: 0.6rem;
+	}
+
+	.dashboard-head h1 {
+		max-width: 12ch;
+		margin: 0.8rem 0 1rem;
+	}
+
+	.connection-grid,
+	.dashboard-grid {
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 1rem;
+	}
+
+	.status-card,
+	.ops-panel {
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		background: #fff;
+		color: var(--text);
+		text-decoration: none;
+		box-shadow: var(--shadow-sm);
+	}
+
+	.status-card {
+		display: block;
+		padding: 1rem;
+		border-left: 4px solid #d1242f;
+	}
+
+	.status-card.good {
+		border-left-color: var(--green);
+	}
+
+	.status-card span,
+	.panel-title span,
+	.muted {
+		color: var(--text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		font-weight: 700;
+		letter-spacing: 0.08em;
+		text-transform: uppercase;
+	}
+
+	.status-card strong,
+	.panel-title strong {
+		display: block;
+		margin-top: 0.35rem;
+		font-size: 1.25rem;
+	}
+
+	.status-card p,
+	.panel-copy {
+		margin: 0.65rem 0 0;
+		color: var(--text-secondary);
+		line-height: 1.6;
+	}
+
+	.ops-panel {
+		overflow: hidden;
+	}
+
+	.ops-panel.wide {
+		grid-column: span 2;
+	}
+
+	.panel-title {
+		display: flex;
+		align-items: flex-start;
+		justify-content: space-between;
+		gap: 1rem;
+		padding: 1rem 1.15rem;
+		border-bottom: 1px solid var(--border-light);
+	}
+
+	.panel-title a {
+		color: var(--text-secondary);
+		font-size: 0.86rem;
+		font-weight: 700;
+		text-decoration: none;
+	}
+
+	.panel-copy {
+		padding: 0 1.15rem 1.15rem;
+	}
+
 	.home {
 		display: flex;
 		flex-direction: column;
@@ -384,7 +715,9 @@
 		border-radius: 6px;
 		font-size: 0.92rem;
 		font-weight: 700;
+		font-family: inherit;
 		text-decoration: none;
+		cursor: pointer;
 		transition:
 			background 0.15s ease,
 			color 0.15s ease,
@@ -400,6 +733,12 @@
 	.secondary-action {
 		background: #fff;
 		color: var(--text);
+	}
+
+	.secondary-action:disabled {
+		cursor: not-allowed;
+		opacity: 0.65;
+		transform: none;
 	}
 
 	.primary-action:hover,
@@ -837,6 +1176,20 @@
 	}
 
 	@media (max-width: 980px) {
+		.dashboard-head {
+			display: grid;
+			align-items: start;
+		}
+
+		.connection-grid,
+		.dashboard-grid {
+			grid-template-columns: 1fr;
+		}
+
+		.ops-panel.wide {
+			grid-column: span 1;
+		}
+
 		.home {
 			gap: 3.5rem;
 			padding-top: 1.25rem;

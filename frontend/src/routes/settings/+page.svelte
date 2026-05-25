@@ -43,6 +43,8 @@
 		providerType: ProviderType;
 		apiKey: string | null;
 		apiSecret: string | null;
+		apiKeyRef: string | null;
+		apiSecretRef: string | null;
 		workspaceId: string | null;
 		awsRoleArn: string | null;
 		awsRegion: string | null;
@@ -149,6 +151,7 @@
 		notes: ''
 	});
 	let providerCheck = $state<ProviderCheckState>({ status: 'idle', message: 'Not tested' });
+	let verifiedProviderRefs = $state<{ apiKeyRef: string | null; apiSecretRef: string | null } | null>(null);
 	let busy = $state(false);
 	let verifying = $state(false);
 
@@ -310,9 +313,9 @@
 		if (node.id === 'hub') return;
 		if (node.id === 'numerai') {
 			numeraiForm = {
-				label: numeraiAccount?.label ?? '',
-				publicId: numeraiAccount?.publicId ?? '',
-				secretKey: ''
+					label: numeraiAccount?.label ?? '',
+					publicId: numeraiAccount?.publicId ?? '',
+					secretKey: ''
 			};
 			drawer = { kind: 'numerai' };
 		} else if (node.id === 'passkeys') {
@@ -322,6 +325,7 @@
 			if (template) {
 				applyProviderTemplate(template);
 				providerCheck = { status: 'idle', message: 'Not tested' };
+				verifiedProviderRefs = null;
 				drawer = { kind: 'add-provider' };
 			}
 		} else if (node.type === 'provider') {
@@ -331,8 +335,8 @@
 				providerForm = {
 					name: p.name,
 					providerType: (p.providerType as ProviderType) ?? 'custom',
-					apiKey: p.apiKey ?? '',
-					apiSecret: p.apiSecret ?? '',
+					apiKey: '',
+					apiSecret: '',
 					workspaceId: p.workspaceId ?? '',
 					awsRoleArn: p.awsRoleArn ?? '',
 					awsRegion: p.awsRegion ?? '',
@@ -341,6 +345,7 @@
 						notes: p.notes ?? ''
 					};
 					providerCheck = providerCheckStateFor(p);
+					verifiedProviderRefs = null;
 					drawer = { kind: 'provider', id };
 				}
 			}
@@ -388,6 +393,8 @@
 			providerType: providerForm.providerType,
 			apiKey: providerForm.apiKey.trim() || null,
 			apiSecret: providerForm.apiSecret.trim() || null,
+			apiKeyRef: currentProvider?.apiKeyRef ?? verifiedProviderRefs?.apiKeyRef ?? null,
+			apiSecretRef: currentProvider?.apiSecretRef ?? verifiedProviderRefs?.apiSecretRef ?? null,
 			workspaceId: providerForm.workspaceId.trim() || null,
 			awsRoleArn: providerForm.awsRoleArn.trim() || null,
 			awsRegion: providerForm.awsRegion.trim() || null,
@@ -395,9 +402,16 @@
 		};
 	}
 
+	function providerConfigJsonFromForm() {
+		if (drawer.kind !== 'provider') return null;
+		if (!currentProvider || currentProvider.providerType !== providerForm.providerType) return null;
+		return currentProvider.credentialsJson ?? null;
+	}
+
 	function markProviderCheckDirty() {
 		if (providerCheck.status === 'checking') return;
 		providerCheck = { status: 'idle', message: 'Edited since last check' };
+		verifiedProviderRefs = null;
 	}
 
 	function applyProviderTemplate(template: ProviderTemplate) {
@@ -414,6 +428,7 @@
 
 	function closeDrawer() {
 		drawer = { kind: 'none' };
+		verifiedProviderRefs = null;
 	}
 
 	async function saveNumerai(event: Event) {
@@ -424,27 +439,29 @@
 		}
 		busy = true;
 		try {
+			const publicId = numeraiForm.publicId.trim();
+			const { data, errors } = await dataClient().mutations.verifyNumeraiAccount({
+				publicId,
+				secretKey: numeraiForm.secretKey.trim() || null,
+				secretRef: numeraiAccount?.secretRef ?? null
+			});
+			if (errors?.length) throw new Error(errors[0].message);
+			if (!data?.secretRef) throw new Error(data?.error ?? 'Numerai secret reference was not created');
 			const payload = {
-				publicId: numeraiForm.publicId.trim(),
+				publicId,
+				secretRef: data.secretRef,
 				label: numeraiForm.label.trim() || undefined,
-				...(numeraiForm.secretKey.trim() ? { secretKey: numeraiForm.secretKey.trim() } : {})
+				verifiedAt: data.ok ? data.verifiedAt ?? new Date().toISOString() : null,
+				lastVerifyError: data.ok ? null : data.error ?? 'unknown error'
 			};
 			if (numeraiAccount?.id) {
-				const { data } = await dataClient().models.NumeraiAccount.update({ id: numeraiAccount.id, ...payload });
-				numeraiAccount = data as NumeraiAccount;
+				const updated = await dataClient().models.NumeraiAccount.update({ id: numeraiAccount.id, ...payload });
+				numeraiAccount = updated.data as NumeraiAccount;
 			} else {
-				if (!numeraiForm.secretKey.trim()) {
-					addToast('Secret key is required when linking for the first time', 'error');
-					return;
-				}
-				const { data } = await dataClient().models.NumeraiAccount.create({
-					publicId: payload.publicId,
-					secretKey: numeraiForm.secretKey.trim(),
-					label: payload.label
-				});
-				numeraiAccount = data as NumeraiAccount;
+				const created = await dataClient().models.NumeraiAccount.create(payload);
+				numeraiAccount = created.data as NumeraiAccount;
 			}
-			addToast('Numerai account saved', 'success');
+			addToast(data.ok ? 'Numerai account saved and verified' : `Numerai saved; verify failed: ${data.error ?? 'unknown error'}`, data.ok ? 'success' : 'error');
 			closeDrawer();
 		} catch (e) {
 			addToast(asMessage(e, 'Failed to save Numerai account'), 'error');
@@ -479,26 +496,44 @@
 		try {
 			const providerPayload = providerPayloadFromForm();
 			const payload = {
-				...providerPayload,
+				name: providerPayload.name,
+				providerType: providerPayload.providerType,
+				apiKeyRef: providerPayload.apiKeyRef,
+				apiSecretRef: providerPayload.apiSecretRef,
+				workspaceId: providerPayload.workspaceId,
+				awsRoleArn: providerPayload.awsRoleArn,
+				awsRegion: providerPayload.awsRegion,
+				baseUrl: providerPayload.baseUrl,
+				credentialsJson: providerConfigJsonFromForm(),
 				monthlyBudgetUsd: providerForm.monthlyBudgetUsd ? Number(providerForm.monthlyBudgetUsd) : null,
 				notes: providerForm.notes.trim() || null
 			};
 			if (drawer.kind === 'provider') {
+				const verified = await verifyProviderConnection(drawer.id, providerPayload);
 				await dataClient().models.ComputeProvider.update({
 					id: drawer.id,
 					...payload,
-					verifiedAt: null,
-					lastVerifyError: null
+					apiKeyRef: verified.apiKeyRef ?? providerPayload.apiKeyRef,
+					apiSecretRef: verified.apiSecretRef ?? providerPayload.apiSecretRef,
+					verifiedAt: verified.ok ? verified.verifiedAt ?? new Date().toISOString() : null,
+					lastVerifyError: verified.ok ? null : verified.error ?? 'unknown error'
 				});
-				await verifyProviderConnection(drawer.id, providerPayload);
 			} else {
+				const verified = await verifyProviderConnection(null, providerPayload);
 				const { data } = await dataClient().models.ComputeProvider.create({
 					status: 'available',
 					...payload,
-					verifiedAt: null,
-					lastVerifyError: null
+					apiKeyRef: verified.apiKeyRef ?? providerPayload.apiKeyRef,
+					apiSecretRef: verified.apiSecretRef ?? providerPayload.apiSecretRef,
+					verifiedAt: verified.ok ? verified.verifiedAt ?? new Date().toISOString() : null,
+					lastVerifyError: verified.ok ? null : verified.error ?? 'unknown error'
 				});
-				if (data?.id) await verifyProviderConnection(data.id, providerPayload);
+				if (data?.id && !verified.ok) {
+					await dataClient().models.ComputeProvider.update({
+						id: data.id,
+						lastVerifyError: verified.error ?? 'unknown error'
+					});
+				}
 			}
 			await loadProviders();
 			closeDrawer();
@@ -512,26 +547,35 @@
 	async function verifyProviderConnection(
 		id: string | null,
 		payload: ProviderVerifyPayload
-	): Promise<void> {
+	): Promise<NonNullable<Schema['VerifyResult']['type']>> {
 		providerCheck = { status: 'checking', message: 'Checking connection...' };
 		const { data, errors } = await dataClient().mutations.verifyComputeProvider({
 			providerType: payload.providerType,
 			apiKey: payload.apiKey,
 			apiSecret: payload.apiSecret,
+			apiKeyRef: payload.apiKeyRef,
+			apiSecretRef: payload.apiSecretRef,
 			workspaceId: payload.workspaceId,
 			awsRoleArn: payload.awsRoleArn,
 			awsRegion: payload.awsRegion,
 			baseUrl: payload.baseUrl
 		});
 		if (errors?.length) throw new Error(errors[0].message);
+		if (!data) throw new Error('Provider verification returned no data');
 		const ok = !!data?.ok;
 		const verifiedAt = data?.verifiedAt ?? new Date().toISOString();
 		const error = data?.error ?? 'unknown error';
+		verifiedProviderRefs = {
+			apiKeyRef: data?.apiKeyRef ?? payload.apiKeyRef,
+			apiSecretRef: data?.apiSecretRef ?? payload.apiSecretRef
+		};
 		if (id) {
 			await dataClient().models.ComputeProvider.update({
 				id,
 				verifiedAt: ok ? verifiedAt : null,
-				lastVerifyError: ok ? null : error
+				lastVerifyError: ok ? null : error,
+				apiKeyRef: data?.apiKeyRef ?? payload.apiKeyRef,
+				apiSecretRef: data?.apiSecretRef ?? payload.apiSecretRef
 			});
 		}
 		providerCheck = ok ? { status: 'ok', message: `Verified ${formatDate(verifiedAt)}` } : { status: 'error', message: error };
@@ -539,6 +583,7 @@
 			ok ? `${payload.name} connection verified` : `${payload.name} verify failed: ${error}`,
 			ok ? 'success' : 'error'
 		);
+		return data as NonNullable<Schema['VerifyResult']['type']>;
 	}
 
 	async function testProviderFormConnection() {
@@ -560,7 +605,7 @@
 	}
 
 	async function verifyNumerai() {
-		if (!numeraiAccount?.id || !numeraiAccount.publicId || !numeraiAccount.secretKey) {
+		if (!numeraiAccount?.id || !numeraiAccount.publicId || !numeraiAccount.secretRef) {
 			addToast('Save credentials before verifying', 'error');
 			return;
 		}
@@ -568,14 +613,15 @@
 		try {
 			const { data, errors } = await dataClient().mutations.verifyNumeraiAccount({
 				publicId: numeraiAccount.publicId,
-				secretKey: numeraiAccount.secretKey
+				secretRef: numeraiAccount.secretRef
 			});
 			if (errors?.length) throw new Error(errors[0].message);
 			const ok = !!data?.ok;
 			await dataClient().models.NumeraiAccount.update({
 				id: numeraiAccount.id,
 				verifiedAt: ok ? data?.verifiedAt ?? new Date().toISOString() : null,
-				lastVerifyError: ok ? null : data?.error ?? 'unknown error'
+				lastVerifyError: ok ? null : data?.error ?? 'unknown error',
+				secretRef: data?.secretRef ?? numeraiAccount.secretRef
 			});
 			addToast(ok ? 'Numerai credentials verified' : `Verify failed: ${data?.error ?? 'unknown error'}`, ok ? 'success' : 'error');
 			await loadNumerai();
@@ -596,8 +642,10 @@
 			await verifyProviderConnection(id, {
 				name: p.name,
 				providerType: (p.providerType as ProviderType) ?? 'custom',
-				apiKey: p.apiKey ?? null,
-				apiSecret: p.apiSecret ?? null,
+				apiKey: null,
+				apiSecret: null,
+				apiKeyRef: p.apiKeyRef ?? null,
+				apiSecretRef: p.apiSecretRef ?? null,
 				workspaceId: p.workspaceId ?? null,
 				awsRoleArn: p.awsRoleArn ?? null,
 				awsRegion: p.awsRegion ?? null,
@@ -725,7 +773,7 @@
 									<dt>Public ID</dt>
 									<dd class="mono">{numeraiAccount.publicId}</dd>
 									<dt>Secret key</dt>
-									<dd class="mono">{maskSecret(numeraiAccount.secretKey)}</dd>
+									<dd class="mono">{maskSecret(numeraiAccount.secretRef)}</dd>
 									<dt>Status</dt>
 									<dd>
 										{#if numeraiAccount.lastVerifyError}
@@ -806,6 +854,10 @@
 											<span class="status-unknown">not verified</span>
 										{/if}
 									</dd>
+									<dt>API key ref</dt>
+									<dd class="mono">{maskSecret(currentProvider.apiKeyRef)}</dd>
+									<dt>API secret ref</dt>
+									<dd class="mono">{maskSecret(currentProvider.apiSecretRef)}</dd>
 								</dl>
 							{/if}
 							<form class="form" onsubmit={saveProvider} oninput={markProviderCheckDirty}>
@@ -826,7 +878,7 @@
 
 								{#if providerForm.providerType === 'prime_intellect'}
 									<label>
-										<span>API key</span>
+										<span>API key {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : ''}</span>
 										<input type="password" bind:value={providerForm.apiKey} autocomplete="off" placeholder="pi_…" />
 									</label>
 									<label>
@@ -839,11 +891,11 @@
 									</label>
 								{:else if providerForm.providerType === 'modal'}
 									<label>
-										<span>Token ID</span>
+										<span>Token ID {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : ''}</span>
 										<input type="text" bind:value={providerForm.apiKey} autocomplete="off" placeholder="ak-…" />
 									</label>
 									<label>
-										<span>Token secret</span>
+										<span>Token secret {currentProvider?.apiSecretRef ? '(leave blank to keep current)' : ''}</span>
 										<input type="password" bind:value={providerForm.apiSecret} autocomplete="off" placeholder="as-…" />
 									</label>
 								{:else if providerForm.providerType === 'sagemaker'}
@@ -857,7 +909,7 @@
 									</label>
 								{:else if providerForm.providerType === 'custom'}
 									<label>
-										<span>API key (optional)</span>
+										<span>API key {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : '(optional)'}</span>
 										<input type="password" bind:value={providerForm.apiKey} autocomplete="off" />
 									</label>
 									<label>

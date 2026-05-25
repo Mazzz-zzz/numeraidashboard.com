@@ -5,12 +5,15 @@ import {
 	signOut as amplifySignOut,
 	confirmSignUp as amplifyConfirmSignUp,
 	resendSignUpCode as amplifyResendCode,
+	resetPassword as amplifyResetPassword,
+	confirmResetPassword as amplifyConfirmResetPassword,
 	associateWebAuthnCredential,
 	deleteWebAuthnCredential,
 	listWebAuthnCredentials,
 	getCurrentUser,
 	fetchAuthSession,
 	type AuthUser,
+	type AuthSession,
 } from 'aws-amplify/auth';
 import { writable } from 'svelte/store';
 import outputs from '../../amplify_outputs.json';
@@ -52,11 +55,23 @@ export async function refreshAuth(): Promise<void> {
 	try {
 		const user = await getCurrentUser();
 		const session = await fetchAuthSession();
+		if (!session.tokens?.idToken || !session.tokens?.accessToken) {
+			throw new Error('No active Cognito token session');
+		}
 		const email = (session.tokens?.idToken?.payload?.email as string | undefined) ?? null;
 		authState.set({ loading: false, user, email });
 	} catch {
 		authState.set({ loading: false, user: null, email: null });
 	}
+}
+
+export async function requireAuthSession(): Promise<AuthSession> {
+	const session = await fetchAuthSession();
+	if (!session.tokens?.idToken || !session.tokens?.accessToken) {
+		await refreshAuth();
+		throw new Error('Sign in again before running this action.');
+	}
+	return session;
 }
 
 export async function signIn(email: string, password: string) {
@@ -90,7 +105,10 @@ export async function signUp(email: string, password: string) {
 	return amplifySignUp({
 		username: email,
 		password,
-		options: { userAttributes: { email } },
+		options: {
+			userAttributes: { email },
+			clientMetadata: import.meta.env.DEV ? { devAutoConfirmSignUp: 'true' } : undefined,
+		},
 	});
 }
 
@@ -100,6 +118,18 @@ export async function confirmSignUp(email: string, code: string) {
 
 export async function resendCode(email: string) {
 	return amplifyResendCode({ username: email });
+}
+
+export async function resetPassword(email: string) {
+	return amplifyResetPassword({ username: email });
+}
+
+export async function confirmResetPassword(email: string, code: string, newPassword: string) {
+	return amplifyConfirmResetPassword({
+		username: email,
+		confirmationCode: code,
+		newPassword,
+	});
 }
 
 export async function signOut() {

@@ -1,8 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import { signIn, signInWithPasskey, signUp, confirmSignUp, resendCode } from '$lib/auth';
+	import {
+		signIn,
+		signInWithPasskey,
+		signUp,
+		confirmSignUp,
+		resendCode,
+		resetPassword,
+		confirmResetPassword
+	} from '$lib/auth';
 
-	type Mode = 'signin' | 'signup' | 'confirm';
+	type Mode = 'signin' | 'signup' | 'confirm' | 'reset' | 'resetConfirm';
 
 	let mode = $state<Mode>('signin');
 	let email = $state('');
@@ -28,14 +36,31 @@
 				await signIn(email, password);
 				goto(nextPath());
 			} else if (mode === 'signup') {
-				await signUp(email, password);
+				const result = await signUp(email, password);
+				if (result.isSignUpComplete || result.nextStep.signUpStep === 'DONE') {
+					await signIn(email, password);
+					goto(nextPath());
+					return;
+				}
 				info = 'Check your email for a verification code.';
 				mode = 'confirm';
-			} else {
+			} else if (mode === 'confirm') {
 				await confirmSignUp(email, code);
 				info = 'Account confirmed. You can sign in now.';
 				mode = 'signin';
 				code = '';
+			} else if (mode === 'reset') {
+				await resetPassword(email);
+				info = 'Check your email for a reset code.';
+				mode = 'resetConfirm';
+				code = '';
+				password = '';
+			} else {
+				await confirmResetPassword(email, code, password);
+				info = 'Password reset. You can sign in now.';
+				mode = 'signin';
+				code = '';
+				password = '';
 			}
 		} catch (e) {
 			error = e instanceof Error ? e.message : 'Something went wrong';
@@ -79,7 +104,9 @@
 		<h1>
 			{#if mode === 'signin'}Sign in
 			{:else if mode === 'signup'}Create account
-			{:else}Confirm email
+			{:else if mode === 'confirm'}Confirm email
+			{:else if mode === 'reset'}Reset password
+			{:else}Set new password
 			{/if}
 		</h1>
 
@@ -102,9 +129,9 @@
 				<input type="email" bind:value={email} required autocomplete="email" disabled={loading} />
 			</label>
 
-			{#if mode !== 'confirm'}
+			{#if mode !== 'confirm' && mode !== 'reset'}
 				<label>
-					<span>Password</span>
+					<span>{mode === 'resetConfirm' ? 'New password' : 'Password'}</span>
 					<input
 						type="password"
 						bind:value={password}
@@ -116,9 +143,9 @@
 				</label>
 			{/if}
 
-			{#if mode === 'confirm'}
+			{#if mode === 'confirm' || mode === 'resetConfirm'}
 				<label>
-					<span>Verification code</span>
+					<span>{mode === 'confirm' ? 'Verification code' : 'Reset code'}</span>
 					<input type="text" bind:value={code} required inputmode="numeric" disabled={loading} />
 				</label>
 			{/if}
@@ -130,7 +157,9 @@
 				{#if loading}Working…
 				{:else if mode === 'signin'}Sign in
 				{:else if mode === 'signup'}Create account
-				{:else}Confirm
+				{:else if mode === 'confirm'}Confirm
+				{:else if mode === 'reset'}Send reset code
+				{:else}Reset password
 				{/if}
 			</button>
 
@@ -153,6 +182,9 @@
 
 		<div class="switch">
 			{#if mode === 'signin'}
+				<button type="button" class="link" onclick={() => { mode = 'reset'; error = null; info = null; password = ''; code = ''; }}>
+					Forgot password?
+				</button>
 				<button type="button" class="link" onclick={() => { mode = 'signup'; error = null; info = null; }}>
 					Need an account? Create one
 				</button>
@@ -160,9 +192,20 @@
 				<button type="button" class="link" onclick={() => { mode = 'signin'; error = null; info = null; }}>
 					Already have an account? Sign in
 				</button>
-			{:else}
+			{:else if mode === 'confirm'}
 				<button type="button" class="link" onclick={resend}>Resend code</button>
 				<button type="button" class="link" onclick={() => { mode = 'signin'; error = null; info = null; }}>
+					Back to sign in
+				</button>
+			{:else if mode === 'reset'}
+				<button type="button" class="link" onclick={() => { mode = 'signin'; error = null; info = null; }}>
+					Back to sign in
+				</button>
+			{:else}
+				<button type="button" class="link" onclick={() => { mode = 'reset'; error = null; info = null; password = ''; code = ''; }}>
+					Send a new code
+				</button>
+				<button type="button" class="link" onclick={() => { mode = 'signin'; error = null; info = null; password = ''; code = ''; }}>
 					Back to sign in
 				</button>
 			{/if}
