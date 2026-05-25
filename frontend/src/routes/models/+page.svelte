@@ -191,23 +191,27 @@
 		}
 	}
 
-	async function remove() {
-		const d = drawer;
-		if (d.kind !== 'edit') return;
-		const m = models.find((mm) => mm.id === d.id);
-		if (!m) return;
-		if (!confirm(`Delete model “${m.name}”?`)) return;
+	async function removeModel(model: ModelRegistryItem, closeAfter = false, confirmFirst = false) {
+		if (confirmFirst && !confirm(`Delete model "${model.name}"?`)) return;
 		busy = true;
 		try {
-			await deleteRegistryModel(d.id);
+			await deleteRegistryModel(model.id);
 			addToast('Model deleted', 'success');
 			await load();
-			closeDrawer();
+			if (closeAfter) closeDrawer();
 		} catch (e) {
 			addToast(asMessage(e, 'Failed to delete model'), 'error');
 		} finally {
 			busy = false;
 		}
+	}
+
+	async function remove() {
+		const d = drawer;
+		if (d.kind !== 'edit') return;
+		const m = models.find((mm) => mm.id === d.id);
+		if (!m) return;
+		await removeModel(m, true, true);
 	}
 
 	function asMessage(e: unknown, fallback: string) {
@@ -340,10 +344,23 @@
 											{:else}
 												<button type="button" onclick={() => quickStage(model.id, 'retired')} disabled={busy}>Retire</button>
 											{/if}
+											{#if model.stage !== 'live' && model.stage !== 'retired'}
+												<button type="button" onclick={() => quickStage(model.id, 'retired')} disabled={busy}>Archive</button>
+											{/if}
 											<button type="button" onclick={() => refreshModelMetrics(model)} disabled={busy}>
 												Refresh
 											</button>
 											<button type="button" onclick={() => openEdit(model)}>Edit</button>
+											<button
+												type="button"
+												class="icon-danger"
+												aria-label={`Delete ${model.name}`}
+												title="Delete model"
+												onclick={() => removeModel(model)}
+												disabled={busy}
+											>
+												×
+											</button>
 										</td>
 									</tr>
 								{/each}
@@ -597,6 +614,17 @@
 		cursor: pointer;
 	}
 	.actions button:hover:not(:disabled) { background: var(--hover-bg); }
+	.actions .icon-danger {
+		min-width: 1.85rem;
+		padding-inline: 0.45rem;
+		border-color: var(--red);
+		color: var(--red);
+		font-size: 1rem;
+		line-height: 1;
+	}
+	.actions .icon-danger:hover:not(:disabled) {
+		background: var(--badge-red);
+	}
 
 	.stage-chip {
 		display: inline-block;

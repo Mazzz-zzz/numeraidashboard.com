@@ -80,6 +80,8 @@ type PrimePod = {
 };
 
 const ssm = new SSMClient({});
+const defaultDirectImage = 'cuda_12_6_pytorch_2_7';
+const defaultGpuType = 'L40S_48GB';
 
 export async function launchPrimePod(
 	input: PrimeLaunchInput,
@@ -92,13 +94,6 @@ export async function launchPrimePod(
 	const settings = primeSettings(input);
 	if (!settings.customTemplateId && settings.image === 'custom_template') {
 		return failure('Prime Intellect customTemplateId is required for custom_template pods', input.checkedAt, null);
-	}
-	if (!settings.customTemplateId && settings.image !== 'custom_template') {
-		return failure(
-			'Prime Intellect compute pods need a custom template that starts the Numerai ML worker. Set providerConfigJson.primeIntellect.customTemplateId.',
-			input.checkedAt,
-			null
-		);
 	}
 
 	const envVars = {
@@ -114,7 +109,7 @@ export async function launchPrimePod(
 			status: 'queued',
 			providerJobId: `prime-dry-run-${input.runId}`,
 			checkedAt: input.checkedAt,
-			logTail: `Prime Intellect dry run prepared ${settings.gpuType}x${settings.gpuCount} custom-template pod for run ${input.runId}.`,
+			logTail: `Prime Intellect dry run prepared ${settings.gpuType}x${settings.gpuCount} ${settings.image} pod for run ${input.runId}.`,
 			error: null,
 			costUsd: null,
 			metricsJson: { dryRun: true, gpuType: settings.gpuType, gpuCount: settings.gpuCount },
@@ -253,9 +248,9 @@ function primeSettings(input: PrimeProviderInput): PrimeSettings {
 	const customTemplateId = stringFrom(raw.customTemplateId);
 	return {
 		dryRun: raw.dryRun === true,
-		gpuType: stringFrom(raw.gpuType) ?? 'RTX4090_24GB',
+		gpuType: stringFrom(raw.gpuType) ?? defaultGpuType,
 		gpuCount,
-		image: stringFrom(raw.image) ?? (customTemplateId ? 'custom_template' : 'custom_template'),
+		image: stringFrom(raw.image) ?? stringFrom(raw.environmentType) ?? (customTemplateId ? 'custom_template' : defaultDirectImage),
 		customTemplateId,
 		providerType: stringFrom(raw.providerType),
 		cloudId: stringFrom(raw.cloudId),
@@ -295,11 +290,27 @@ async function selectOffer(
 	const body = (await resp.json().catch(() => null)) as { readonly items?: AvailabilityOffer[] } | null;
 	if (!resp.ok) throw new Error(`Prime Intellect availability failed (${resp.status}): ${bodySummary(body)}`);
 
-	const offers = (body?.items ?? [])
+	const availableOffers = body?.items ?? [];
+	const offers = availableOffers
+		.filter((offer) => compatibleOfferForImage(offer, settings.image))
 		.filter((offer) => settings.maxPrice === null || (numberOrNull(offer.prices?.onDemand) ?? Infinity) <= settings.maxPrice)
 		.sort((a, b) => (numberOrNull(a.prices?.onDemand) ?? Infinity) - (numberOrNull(b.prices?.onDemand) ?? Infinity));
+	if (!offers.length && availableOffers.length) {
+		throw new Error(`No Prime Intellect availability compatible with ${settings.image} for ${settings.gpuType}x${settings.gpuCount}`);
+	}
 	if (!offers.length) throw new Error(`No Prime Intellect availability found for ${settings.gpuType}x${settings.gpuCount}`);
 	return offers[0];
+}
+
+function compatibleOfferForImage(offer: AvailabilityOffer, image: string): boolean {
+	const provider = stringFrom(offer.provider)?.toLowerCase();
+	if (isDirectCudaImage(image) && provider === 'massedcompute') return false;
+	return true;
+}
+
+function isDirectCudaImage(image: string): boolean {
+	const normalized = image.toLowerCase();
+	return normalized === 'ubuntu_22_cuda_12' || normalized.startsWith('cuda_');
 }
 
 function buildCreatePodPayload(

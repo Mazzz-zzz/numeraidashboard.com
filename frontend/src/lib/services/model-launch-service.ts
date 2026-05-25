@@ -24,11 +24,33 @@ export type ModelTrainingResult = {
 	readonly action: TrainingActionResult;
 };
 
+export type LaunchTrainingToast = {
+	readonly message: string;
+	readonly type: 'success' | 'error';
+};
+
+export function launchTrainingToast(input: {
+	readonly model: Pick<ModelRegistryItem, 'name'>;
+	readonly action: Pick<TrainingActionResult, 'ok' | 'error'>;
+}): LaunchTrainingToast {
+	if (!input.action.ok) {
+		return {
+			message: input.action.error ?? `${input.model.name} could not launch.`,
+			type: 'error'
+		};
+	}
+	return {
+		message: `${input.model.name} is training.`,
+		type: 'success'
+	};
+}
+
 export async function launchModelDraft(
 	input: {
 		readonly model: ModelRegistryItem;
 		readonly provider: ComputeProvider;
 		readonly maxSpendUsd: number | null;
+		readonly gpuType?: string | null;
 	},
 	client: Client = dataClient()
 ): Promise<ModelTrainingResult> {
@@ -54,7 +76,14 @@ export async function launchModelDraft(
 		},
 		client
 	);
-	const action = await startTrainingRun({ runId: run.id, provider: input.provider }, client);
+	const action = await startTrainingRun(
+		{
+			runId: run.id,
+			provider: input.provider,
+			providerConfigJson: providerConfigWithGpu(input.provider, input.gpuType ?? null)
+		},
+		client
+	);
 	const job = await persistJobAction(plannedJob, action, client);
 	const updatedRun = await updateTrainingRunFromAction({ runId: run.id, action }, client);
 	const model = await persistModelAction(
@@ -238,7 +267,7 @@ async function persistJobAction(
 			startedAt: toComputeJobStatus(action.status) === 'running' ? action.checkedAt : job.startedAt,
 			finishedAt: terminalActionTimestamp(action.status, action.checkedAt),
 			providerJobId: action.providerJobId ?? job.providerJobId ?? null,
-			logTail: action.logTail ?? null,
+			logTail: action.logTail ?? action.error ?? null,
 			actualCostUsd: action.costUsd ?? null
 		},
 		client
@@ -294,6 +323,23 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 	} catch {
 		return {};
 	}
+}
+
+function providerConfigWithGpu(provider: ComputeProvider, gpuType: string | null): unknown {
+	if (provider.providerType !== 'prime_intellect' || !gpuType?.trim()) return provider.credentialsJson ?? null;
+	const config = jsonRecord(provider.credentialsJson);
+	const prime = recordOrNull(config.primeIntellect) ?? recordOrNull(config.prime_intellect) ?? {};
+	return {
+		...config,
+		primeIntellect: {
+			...prime,
+			gpuType: gpuType.trim()
+		}
+	};
+}
+
+function recordOrNull(value: unknown): Record<string, unknown> | null {
+	return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
 }
 
 function throwGraphQLError(errors: readonly { message?: string }[] | undefined, fallback: string): void {

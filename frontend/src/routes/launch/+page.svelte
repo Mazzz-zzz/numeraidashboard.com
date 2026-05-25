@@ -4,7 +4,7 @@
 	import { authState } from '$lib/auth';
 	import { addToast } from '$lib/stores';
 	import { listComputeJobs, listComputeProviders, type ComputeJob, type ComputeProvider } from '$lib/services/compute-service';
-	import { launchModelDraft, refreshModelTraining } from '$lib/services/model-launch-service';
+	import { launchModelDraft, launchTrainingToast, refreshModelTraining } from '$lib/services/model-launch-service';
 	import {
 		listRegistryModels,
 		modelStageLabels,
@@ -19,7 +19,13 @@
 	let providers = $state<ComputeProvider[]>([]);
 	let jobs = $state<ComputeJob[]>([]);
 	let selectedProviderId = $state('');
-	let maxSpend = $state(20);
+	let selectedGpuType = $state('L40S_48GB');
+
+	const gpuOptions = [
+		{ value: 'L40S_48GB', label: 'L40S 48GB' },
+		{ value: 'A100_40GB', label: 'A100 40GB' },
+		{ value: 'A100_80GB', label: 'A100 80GB' }
+	];
 
 	const providerOptions = $derived(providers.filter((provider) => provider.status !== 'disabled'));
 	const selectedProvider = $derived(providerOptions.find((provider) => provider.id === selectedProviderId));
@@ -62,10 +68,19 @@
 		}
 		busy = true;
 		try {
-			const result = await launchModelDraft({ model, provider: selectedProvider, maxSpendUsd: maxSpend });
+			const result = await launchModelDraft({
+				model,
+				provider: selectedProvider,
+				maxSpendUsd: null,
+				gpuType: selectedProvider.providerType === 'prime_intellect' ? selectedGpuType : null
+			});
 			upsertModel(result.model);
 			upsertJob(result.job);
-			addToast(`${result.model.name} is training.`, 'success');
+			const toast = launchTrainingToast(result);
+			addToast(toast.message, toast.type);
+			if (!result.action.ok) {
+				return;
+			}
 		} catch (error) {
 			console.error(error);
 			await markFailed(model);
@@ -125,6 +140,28 @@
 		return providers.find((provider) => provider.id === job?.providerId)?.name ?? selectedProvider?.name ?? 'No provider';
 	}
 
+	function jobDetail(model: ModelRegistryItem): string | null {
+		return jobForModel(model)?.logTail ?? lastTrainingError(model);
+	}
+
+	function lastTrainingError(model: ModelRegistryItem): string | null {
+		const lineage = jsonRecord(model.lineageJson);
+		const action = jsonRecord(lineage.lastTrainingAction);
+		const error = action.error;
+		return typeof error === 'string' && error.trim() ? error.trim() : null;
+	}
+
+	function jsonRecord(value: unknown): Record<string, unknown> {
+		if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+		if (typeof value !== 'string') return {};
+		try {
+			const parsed = JSON.parse(value);
+			return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+		} catch {
+			return {};
+		}
+	}
+
 	function stageName(stage: string | null | undefined): string {
 		return modelStageLabels[(stage ?? 'draft') as ModelStage] ?? 'Draft';
 	}
@@ -155,8 +192,12 @@
 					</select>
 				</label>
 				<label>
-					<span>Budget</span>
-					<input type="number" min="1" max="5000" bind:value={maxSpend} />
+					<span>GPU</span>
+					<select bind:value={selectedGpuType} disabled={selectedProvider?.providerType !== 'prime_intellect'}>
+						{#each gpuOptions as gpu (gpu.value)}
+							<option value={gpu.value}>{gpu.label}</option>
+						{/each}
+					</select>
 				</label>
 			</div>
 		</header>
@@ -182,6 +223,8 @@
 					</thead>
 					<tbody>
 						{#each launchModels as model (model.id)}
+							{@const job = jobForModel(model)}
+							{@const detail = jobDetail(model)}
 							<tr>
 								<td>
 									<strong>{model.name}</strong>
@@ -189,7 +232,12 @@
 								</td>
 								<td><span class="stage-chip" data-stage={model.stage}>{stageName(model.stage)}</span></td>
 								<td>{providerName(model)}</td>
-								<td class="mono">{jobForModel(model)?.status ?? 'not started'}</td>
+								<td class="job-status mono">
+									<span>{job?.status ?? 'not started'}</span>
+									{#if detail}
+										<small>{detail}</small>
+									{/if}
+								</td>
 								<td class="actions">
 									{#if model.stage === 'training'}
 										<button type="button" onclick={() => refresh(model)} disabled={busy}>Refresh</button>
@@ -270,13 +318,11 @@
 	}
 
 	select,
-	input,
 	button {
 		font: inherit;
 	}
 
-	select,
-	input {
+	select {
 		width: 100%;
 		box-sizing: border-box;
 		border: 1px solid var(--border);
@@ -350,6 +396,20 @@
 
 	.mono {
 		font-family: var(--font-mono);
+	}
+
+	.job-status {
+		max-width: 280px;
+	}
+
+	.job-status small {
+		display: block;
+		margin-top: 0.25rem;
+		color: var(--text-muted);
+		font-family: inherit;
+		font-size: 0.72rem;
+		line-height: 1.25;
+		white-space: normal;
 	}
 
 	.actions {
