@@ -2,23 +2,40 @@
 	import { onMount } from 'svelte';
 	import AuthGate from '$lib/components/AuthGate.svelte';
 	import { authState } from '$lib/auth';
-	import { dataClient } from '$lib/data';
 	import { addToast } from '$lib/stores';
-	import type { Schema } from '../../../amplify/data/resource';
-
-	type ModelRegistryItem = Schema['ModelRegistryItem']['type'];
-	type Stage = 'draft' | 'testing' | 'live' | 'retired';
-	const stages: Stage[] = ['draft', 'testing', 'live', 'retired'];
-	const stageLabel: Record<Stage, string> = {
-		draft: 'Draft',
-		testing: 'Testing',
-		live: 'Live',
-		retired: 'Retired'
-	};
+	import ModelLineageView from '$lib/components/ModelLineageView.svelte';
+	import ModelSubmitView from '$lib/components/ModelSubmitView.svelte';
+	import {
+		createRegistryModel,
+		deleteRegistryModel,
+		listRegistryModels,
+		modelStageLabels,
+		modelStages,
+		updateRegistryModel,
+		updateRegistryModelStage,
+		type ModelRegistryItem,
+		type ModelStage
+	} from '$lib/services/registry-service';
+	import {
+		latestRoundDataset,
+		latestSubmissionForModel,
+		listRoundDatasets,
+		listModelSubmissions,
+		refreshRoundMetricsForModel,
+		roundFreshnessLabel,
+		roundLabel,
+		submissionStatusLabel,
+		type ModelSubmission,
+		type RoundDataset
+	} from '$lib/services/submission-service';
 
 	let models = $state<ModelRegistryItem[]>([]);
+	let submissions = $state<ModelSubmission[]>([]);
+	let rounds = $state<RoundDataset[]>([]);
 	let loading = $state(true);
-	let stageFilter = $state<Stage | 'all'>('all');
+	let stageFilter = $state<ModelStage | 'all'>('all');
+	let viewMode = $state<'registry' | 'lineage' | 'submit'>('registry');
+	let refreshError = $state<string | null>(null);
 
 	type Drawer =
 		| { kind: 'none' }
@@ -28,7 +45,7 @@
 
 	let form = $state({
 		name: '',
-		stage: 'draft' as Stage,
+		stage: 'draft' as ModelStage,
 		numeraiModelId: '',
 		parentModelId: '',
 		changeSummary: ''
@@ -46,8 +63,14 @@
 	async function load() {
 		loading = true;
 		try {
-			const { data } = await dataClient().models.ModelRegistryItem.list();
-			models = (data ?? []) as ModelRegistryItem[];
+			const [modelRows, submissionRows, roundRows] = await Promise.all([
+				listRegistryModels(),
+				listModelSubmissions(),
+				listRoundDatasets()
+			]);
+			models = modelRows;
+			submissions = submissionRows;
+			rounds = roundRows;
 		} catch (e) {
 			addToast(asMessage(e, 'Failed to load models'), 'error');
 		} finally {
@@ -56,19 +79,21 @@
 	}
 
 	const filtered = $derived(
-		stageFilter === 'all' ? models : models.filter((m) => (m.stage as Stage) === stageFilter)
+		stageFilter === 'all' ? models : models.filter((m) => (m.stage as ModelStage) === stageFilter)
 	);
-	const stageCounts = $derived({
-		draft: models.filter((m) => m.stage === 'draft').length,
-		testing: models.filter((m) => m.stage === 'testing').length,
-		live: models.filter((m) => m.stage === 'live').length,
-		retired: models.filter((m) => m.stage === 'retired').length
-	});
+	const stageCounts = $derived.by(() =>
+		Object.fromEntries(modelStages.map((stage) => [stage, models.filter((m) => m.stage === stage).length])) as Record<
+			ModelStage,
+			number
+		>
+	);
 	const editing = $derived.by(() => {
 		const d = drawer;
 		if (d.kind !== 'edit') return null;
 		return models.find((m) => m.id === d.id) ?? null;
 	});
+	const latestRound = $derived(latestRoundDataset(rounds));
+	const roundFreshness = $derived(roundFreshnessLabel(latestRound));
 
 	function openNew() {
 		form = { name: '', stage: 'draft', numeraiModelId: '', parentModelId: '', changeSummary: '' };
@@ -78,7 +103,7 @@
 	function openEdit(model: ModelRegistryItem) {
 		form = {
 			name: model.name ?? '',
-			stage: (model.stage as Stage) ?? 'draft',
+			stage: (model.stage as ModelStage) ?? 'draft',
 			numeraiModelId: model.numeraiModelId ?? '',
 			parentModelId: model.parentModelId ?? '',
 			changeSummary: model.changeSummary ?? ''
@@ -99,19 +124,12 @@
 		const d = drawer;
 		busy = true;
 		try {
-			const payload = {
-				name: form.name.trim(),
-				stage: form.stage,
-				numeraiModelId: form.numeraiModelId.trim() || null,
-				parentModelId: form.parentModelId || null,
-				changeSummary: form.changeSummary.trim() || null
-			};
 			if (d.kind === 'edit') {
-				await dataClient().models.ModelRegistryItem.update({ id: d.id, ...payload });
+				await updateRegistryModel(d.id, form);
 				addToast('Model updated', 'success');
 			} else {
-				await dataClient().models.ModelRegistryItem.create(payload);
-				addToast(`${payload.name} registered`, 'success');
+				await createRegistryModel(form);
+				addToast(`${form.name.trim()} registered`, 'success');
 			}
 			await load();
 			closeDrawer();
@@ -122,13 +140,52 @@
 		}
 	}
 
-	async function quickStage(id: string, stage: Stage) {
+	async function quickStage(id: string, stage: ModelStage) {
 		busy = true;
 		try {
-			await dataClient().models.ModelRegistryItem.update({ id, stage });
+			await updateRegistryModelStage(id, stage);
 			await load();
 		} catch (e) {
 			addToast(asMessage(e, 'Failed to change stage'), 'error');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function refreshModelMetrics(model: ModelRegistryItem) {
+		const submission = latestSubmissionForModel(model.id, submissions);
+		const roundNumber = submission?.roundNumber ?? model.lastSubmittedRound ?? null;
+		if (!roundNumber) {
+			addToast('Refresh needs a submitted round for this model.', 'error');
+			return;
+		}
+		busy = true;
+		refreshError = null;
+		try {
+			const refresh = await refreshRoundMetricsForModel({
+				modelId: model.id,
+				submissionId: submission?.id ?? null,
+				roundNumber
+			});
+			if (refresh.round.data) {
+				const nextRound = refresh.round.data as RoundDataset;
+				rounds = [nextRound, ...rounds.filter((round) => round.id !== nextRound.id)];
+			}
+			if (refresh.submission?.data) {
+				const nextSubmission = refresh.submission.data as ModelSubmission;
+				submissions = [
+					nextSubmission,
+					...submissions.filter((item) => item.id !== nextSubmission.id)
+				];
+			}
+			if (refresh.model.data) {
+				const nextModel = refresh.model.data as ModelRegistryItem;
+				models = models.map((item) => (item.id === nextModel.id ? nextModel : item));
+			}
+			addToast(refresh.result.notes ?? 'Round metrics refreshed.', 'success');
+		} catch (e) {
+			refreshError = asMessage(e, 'Round metrics refresh failed');
+			addToast(refreshError, 'error');
 		} finally {
 			busy = false;
 		}
@@ -142,7 +199,7 @@
 		if (!confirm(`Delete model “${m.name}”?`)) return;
 		busy = true;
 		try {
-			await dataClient().models.ModelRegistryItem.delete({ id: d.id });
+			await deleteRegistryModel(d.id);
 			addToast('Model deleted', 'success');
 			await load();
 			closeDrawer();
@@ -170,6 +227,14 @@
 			return value;
 		}
 	}
+
+	function latestSubmissionLabel(modelId: string) {
+		return submissionStatusLabel(latestSubmissionForModel(modelId, submissions));
+	}
+
+	function stageName(stage: string | null | undefined): string {
+		return modelStageLabels[(stage ?? 'draft') as ModelStage] ?? 'Draft';
+	}
 </script>
 
 <svelte:head>
@@ -180,154 +245,183 @@
 	<section class="models-page">
 		<header class="page-head">
 			<div>
-				<p class="eyebrow">Models · Registry</p>
+				<p class="eyebrow">Models</p>
 				<h1>Your registered Numerai models.</h1>
 				<p class="lede">
 					Register a model in the dashboard so submissions, scores, and lineage flow back into one
 					place. Stages move manually here until a submission worker reports them.
 				</p>
+				<p class="round-cache" class:stale={roundFreshness === 'Round cache stale'}>
+					{roundLabel(latestRound)} · {roundFreshness}
+					{#if refreshError}
+						<span>{refreshError}</span>
+					{/if}
+				</p>
 			</div>
 			<button type="button" class="primary" onclick={openNew}>Register model</button>
 		</header>
 
-		<nav class="stage-tabs" aria-label="Stage filter">
-			<button class:active={stageFilter === 'all'} onclick={() => (stageFilter = 'all')}>
-				<span>All</span><strong>{models.length}</strong>
+		<nav class="view-tabs" aria-label="Models views">
+			<button type="button" class:active={viewMode === 'registry'} onclick={() => (viewMode = 'registry')}>
+				Registry
 			</button>
-			{#each stages as s (s)}
-				<button class:active={stageFilter === s} onclick={() => (stageFilter = s)} data-stage={s}>
-					<span>{stageLabel[s]}</span><strong>{stageCounts[s]}</strong>
-				</button>
-			{/each}
+			<button type="button" class:active={viewMode === 'lineage'} onclick={() => (viewMode = 'lineage')}>
+				Lineage
+			</button>
+			<button type="button" class:active={viewMode === 'submit'} onclick={() => (viewMode = 'submit')}>
+				Submit
+			</button>
 		</nav>
 
-		<div class="models-shell" class:drawer-open={drawer.kind !== 'none'}>
-			<div class="list-wrap">
-				{#if loading}
-					<p class="muted pad">Loading models…</p>
-				{:else if models.length === 0}
-					<div class="empty">
-						<p class="eyebrow">No models yet</p>
-						<h2>Register your first model.</h2>
-						<p class="muted">
-							Pick a name, paste the Numerai model ID if you have one, and set a stage. Metrics
-							will populate as submissions land.
-						</p>
-						<button type="button" class="primary" onclick={openNew}>Register model</button>
-					</div>
-				{:else if filtered.length === 0}
-					<p class="muted pad">No models in this stage.</p>
-				{:else}
-					<table>
-						<thead>
-							<tr>
-								<th>Name</th>
-								<th>Stage</th>
-								<th>Numerai ID</th>
-								<th class="num">Corr</th>
-								<th class="num">MMC</th>
-								<th class="num">Payout (NMR)</th>
-								<th>Last submitted</th>
-								<th aria-label="Actions"></th>
-							</tr>
-						</thead>
-						<tbody>
-							{#each filtered as model (model.id)}
-								<tr class="row" onclick={() => openEdit(model)}>
-									<td>
-										<strong>{model.name}</strong>
-									</td>
-									<td>
-										<span class="stage-chip" data-stage={model.stage}>{stageLabel[model.stage as Stage]}</span>
-									</td>
-									<td class="mono small">{model.numeraiModelId || '—'}</td>
-									<td class="num mono">{fmtNum(model.liveCorr)}</td>
-									<td class="num mono">{fmtNum(model.liveMmc)}</td>
-									<td class="num mono">{fmtNum(model.payoutNmr, 2)}</td>
-									<td class="small">
-										{model.lastSubmittedRound != null ? `r${model.lastSubmittedRound}` : '—'}
-										<span class="muted">{fmtDate(model.lastSubmittedAt)}</span>
-									</td>
-									<td class="actions" onclick={(e) => e.stopPropagation()}>
-										{#if model.stage !== 'live'}
-											<button type="button" onclick={() => quickStage(model.id, 'live')} disabled={busy}>Promote</button>
-										{:else}
-											<button type="button" onclick={() => quickStage(model.id, 'retired')} disabled={busy}>Retire</button>
-										{/if}
-										<button type="button" onclick={() => openEdit(model)}>Edit</button>
-									</td>
+		{#if viewMode === 'registry'}
+			<nav class="stage-tabs" aria-label="Stage filter">
+				<button class:active={stageFilter === 'all'} onclick={() => (stageFilter = 'all')}>
+					<span>All</span><strong>{models.length}</strong>
+				</button>
+				{#each modelStages as s (s)}
+					<button class:active={stageFilter === s} onclick={() => (stageFilter = s)} data-stage={s}>
+						<span>{modelStageLabels[s]}</span><strong>{stageCounts[s]}</strong>
+					</button>
+				{/each}
+			</nav>
+
+			<div class="models-shell" class:drawer-open={drawer.kind !== 'none'}>
+				<div class="list-wrap">
+					{#if loading}
+						<p class="muted pad">Loading models…</p>
+					{:else if models.length === 0}
+						<div class="empty">
+							<p class="eyebrow">No models yet</p>
+							<h2>Register your first model.</h2>
+							<p class="muted">
+								Pick a name, paste the Numerai model ID if you have one, and set a stage. Metrics
+								will populate as submissions land.
+							</p>
+							<button type="button" class="primary" onclick={openNew}>Register model</button>
+						</div>
+					{:else if filtered.length === 0}
+						<p class="muted pad">No models in this stage.</p>
+					{:else}
+						<table>
+							<thead>
+								<tr>
+									<th>Name</th>
+									<th>Stage</th>
+									<th>Numerai ID</th>
+									<th class="num">Corr</th>
+									<th class="num">MMC</th>
+									<th class="num">Payout (NMR)</th>
+									<th>Submission</th>
+									<th>Last submitted</th>
+									<th aria-label="Actions"></th>
 								</tr>
-							{/each}
-						</tbody>
-					</table>
+							</thead>
+							<tbody>
+								{#each filtered as model (model.id)}
+									<tr class="row" onclick={() => openEdit(model)}>
+										<td>
+											<strong>{model.name}</strong>
+										</td>
+										<td>
+					<span class="stage-chip" data-stage={model.stage}>{stageName(model.stage)}</span>
+										</td>
+										<td class="mono small">{model.numeraiModelId || '—'}</td>
+										<td class="num mono">{fmtNum(model.liveCorr)}</td>
+										<td class="num mono">{fmtNum(model.liveMmc)}</td>
+										<td class="num mono">{fmtNum(model.payoutNmr, 2)}</td>
+										<td class="small">{latestSubmissionLabel(model.id)}</td>
+										<td class="small">
+											{model.lastSubmittedRound != null ? `r${model.lastSubmittedRound}` : '—'}
+											<span class="muted">{fmtDate(model.lastSubmittedAt)}</span>
+										</td>
+										<td class="actions" onclick={(e) => e.stopPropagation()}>
+											{#if model.stage !== 'live'}
+												<button type="button" onclick={() => quickStage(model.id, 'live')} disabled={busy}>Promote</button>
+											{:else}
+												<button type="button" onclick={() => quickStage(model.id, 'retired')} disabled={busy}>Retire</button>
+											{/if}
+											<button type="button" onclick={() => refreshModelMetrics(model)} disabled={busy}>
+												Refresh
+											</button>
+											<button type="button" onclick={() => openEdit(model)}>Edit</button>
+										</td>
+									</tr>
+								{/each}
+							</tbody>
+						</table>
+					{/if}
+				</div>
+
+				{#if drawer.kind !== 'none'}
+					<aside class="drawer">
+						<header class="drawer-head">
+							<div>
+								<span class="eyebrow">{drawer.kind === 'new' ? 'Register' : 'Edit'}</span>
+								<h2>{drawer.kind === 'new' ? 'New model' : editing?.name || 'Model'}</h2>
+							</div>
+							<button type="button" class="ghost" onclick={closeDrawer} aria-label="Close">✕</button>
+						</header>
+
+						{#if drawer.kind === 'edit' && editing}
+							<dl class="kv">
+								<dt>Live corr</dt><dd class="mono">{fmtNum(editing.liveCorr)}</dd>
+								<dt>Live mmc</dt><dd class="mono">{fmtNum(editing.liveMmc)}</dd>
+								<dt>Payout (NMR)</dt><dd class="mono">{fmtNum(editing.payoutNmr, 2)}</dd>
+								<dt>Last round</dt><dd>{editing.lastSubmittedRound ?? '—'}</dd>
+								<dt>Last submitted</dt><dd>{fmtDate(editing.lastSubmittedAt)}</dd>
+							</dl>
+							<p class="muted small">
+								These fields update when a submission worker reports back. They aren't editable here.
+							</p>
+						{/if}
+
+						<form class="form" onsubmit={save}>
+							<label>
+								<span>Name</span>
+								<input type="text" bind:value={form.name} required placeholder="baseline-v4" />
+							</label>
+							<label>
+								<span>Stage</span>
+								<select bind:value={form.stage}>
+									{#each modelStages as s (s)}
+											<option value={s}>{modelStageLabels[s]}</option>
+									{/each}
+								</select>
+							</label>
+							<label>
+								<span>Parent model</span>
+								<select bind:value={form.parentModelId}>
+									<option value="">— root (no parent) —</option>
+									{#each models.filter((m) => drawer.kind !== 'edit' || m.id !== drawer.id) as p (p.id)}
+										<option value={p.id}>{p.name}</option>
+									{/each}
+								</select>
+							</label>
+							<label>
+								<span>Change summary</span>
+								<input type="text" bind:value={form.changeSummary} placeholder="what changed from parent" />
+							</label>
+							<label>
+								<span>Numerai model ID</span>
+								<input type="text" bind:value={form.numeraiModelId} placeholder="optional · paste from numer.ai/models" />
+							</label>
+							<div class="form-actions">
+								<button type="submit" class="primary" disabled={busy}>
+									{busy ? 'Saving…' : drawer.kind === 'new' ? 'Register' : 'Save changes'}
+								</button>
+								{#if drawer.kind === 'edit'}
+									<button type="button" class="danger" onclick={remove} disabled={busy}>Delete</button>
+								{/if}
+							</div>
+						</form>
+					</aside>
 				{/if}
 			</div>
-
-			{#if drawer.kind !== 'none'}
-				<aside class="drawer">
-					<header class="drawer-head">
-						<div>
-							<span class="eyebrow">{drawer.kind === 'new' ? 'Register' : 'Edit'}</span>
-							<h2>{drawer.kind === 'new' ? 'New model' : editing?.name || 'Model'}</h2>
-						</div>
-						<button type="button" class="ghost" onclick={closeDrawer} aria-label="Close">✕</button>
-					</header>
-
-					{#if drawer.kind === 'edit' && editing}
-						<dl class="kv">
-							<dt>Live corr</dt><dd class="mono">{fmtNum(editing.liveCorr)}</dd>
-							<dt>Live mmc</dt><dd class="mono">{fmtNum(editing.liveMmc)}</dd>
-							<dt>Payout (NMR)</dt><dd class="mono">{fmtNum(editing.payoutNmr, 2)}</dd>
-							<dt>Last round</dt><dd>{editing.lastSubmittedRound ?? '—'}</dd>
-							<dt>Last submitted</dt><dd>{fmtDate(editing.lastSubmittedAt)}</dd>
-						</dl>
-						<p class="muted small">
-							These fields update when a submission worker reports back. They aren't editable here.
-						</p>
-					{/if}
-
-					<form class="form" onsubmit={save}>
-						<label>
-							<span>Name</span>
-							<input type="text" bind:value={form.name} required placeholder="baseline-v4" />
-						</label>
-						<label>
-							<span>Stage</span>
-							<select bind:value={form.stage}>
-								{#each stages as s (s)}
-									<option value={s}>{stageLabel[s]}</option>
-								{/each}
-							</select>
-						</label>
-						<label>
-							<span>Parent model</span>
-							<select bind:value={form.parentModelId}>
-								<option value="">— root (no parent) —</option>
-								{#each models.filter((m) => drawer.kind !== 'edit' || m.id !== drawer.id) as p (p.id)}
-									<option value={p.id}>{p.name}</option>
-								{/each}
-							</select>
-						</label>
-						<label>
-							<span>Change summary</span>
-							<input type="text" bind:value={form.changeSummary} placeholder="what changed from parent" />
-						</label>
-						<label>
-							<span>Numerai model ID</span>
-							<input type="text" bind:value={form.numeraiModelId} placeholder="optional · paste from numer.ai/models" />
-						</label>
-						<div class="form-actions">
-							<button type="submit" class="primary" disabled={busy}>
-								{busy ? 'Saving…' : drawer.kind === 'new' ? 'Register' : 'Save changes'}
-							</button>
-							{#if drawer.kind === 'edit'}
-								<button type="button" class="danger" onclick={remove} disabled={busy}>Delete</button>
-							{/if}
-						</div>
-					</form>
-				</aside>
-			{/if}
-		</div>
+		{:else if viewMode === 'lineage'}
+			<ModelLineageView />
+		{:else}
+			<ModelSubmitView />
+		{/if}
 	</section>
 </AuthGate>
 
@@ -363,11 +457,55 @@
 		margin: 0;
 		max-width: 60ch;
 	}
+	.round-cache {
+		margin: 0.55rem 0 0;
+		color: var(--text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		font-weight: 700;
+	}
+	.round-cache.stale {
+		color: var(--orange);
+	}
+	.round-cache span {
+		display: block;
+		margin-top: 0.15rem;
+		color: var(--red);
+	}
 
 	.stage-tabs {
 		display: flex;
 		gap: 0.4rem;
 		flex-wrap: wrap;
+	}
+	.view-tabs {
+		display: inline-flex;
+		width: fit-content;
+		border: 1px solid var(--border);
+		border-radius: 6px;
+		background: var(--bg-card);
+		overflow: hidden;
+	}
+	.view-tabs button {
+		border: none;
+		border-right: 1px solid var(--border-light);
+		background: transparent;
+		color: var(--text);
+		font: inherit;
+		font-size: 0.84rem;
+		font-weight: 800;
+		padding: 0.45rem 0.8rem;
+		cursor: pointer;
+	}
+	.view-tabs button:last-child {
+		border-right: none;
+	}
+	.view-tabs button:hover {
+		background: var(--hover-bg);
+	}
+	.view-tabs button.active {
+		background: var(--text);
+		color: #fff;
 	}
 	.stage-tabs button {
 		display: inline-flex;
@@ -474,16 +612,31 @@
 		color: var(--text);
 		white-space: nowrap;
 	}
-	.stage-chip[data-stage='live'] {
-		border-color: var(--green);
-		background: var(--badge-green);
-		color: var(--green);
-	}
-	.stage-chip[data-stage='testing'] {
-		border-color: var(--orange);
-		background: var(--badge-orange);
-		color: var(--orange);
-	}
+		.stage-chip[data-stage='live'] {
+			border-color: var(--green);
+			background: var(--badge-green);
+			color: var(--green);
+		}
+		.stage-chip[data-stage='success'] {
+			border-color: var(--green);
+			background: var(--badge-green);
+			color: var(--green);
+		}
+		.stage-chip[data-stage='testing'] {
+			border-color: var(--orange);
+			background: var(--badge-orange);
+			color: var(--orange);
+		}
+		.stage-chip[data-stage='training'] {
+			border-color: var(--orange);
+			background: var(--badge-orange);
+			color: var(--orange);
+		}
+		.stage-chip[data-stage='failed'] {
+			border-color: var(--red);
+			background: var(--badge-red);
+			color: var(--red);
+		}
 	.stage-chip[data-stage='retired'] {
 		color: var(--text-muted);
 	}

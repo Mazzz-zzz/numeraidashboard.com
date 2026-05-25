@@ -1,193 +1,170 @@
 <script lang="ts">
-	import {
-		SvelteFlow,
-		Background,
-		BackgroundVariant,
-		Controls,
-		MiniMap,
-		Panel,
-		type Node,
-		type Edge,
-		type DefaultEdgeOptions,
-		type FitViewOptions
-	} from '@xyflow/svelte';
-	import '@xyflow/svelte/dist/style.css';
+	import { goto } from '$app/navigation';
 	import AuthGate from '$lib/components/AuthGate.svelte';
-	import { computeProviders, lineageBranches, modelTemplates } from '$lib/product-data';
+	import { addToast } from '$lib/stores';
+	import {
+		parseSweepValues,
+		sweepCandidates as buildSweepCandidates,
+		type PipelineTemplate
+	} from '$lib/services/pipeline-service';
+	import { createRegistryModel } from '$lib/services/registry-service';
 
-	type PresetId = 'baseline' | 'challenger' | 'ensemble';
-	type BuilderNodeData = { label: string };
-	type BuilderNode = Node<BuilderNodeData>;
-	type BuilderEdge = Edge;
-	type BranchRow = {
-		id: string;
-		name: string;
-		delta: string;
-		score: string;
-		children: string[];
+	type ModelType = 'lgbm' | 'catboost' | 'mlp';
+	type Tournament = 'classic' | 'signals';
+	type SweepParameter =
+		| 'learning_rate'
+		| 'num_rounds'
+		| 'num_leaves'
+		| 'max_depth'
+		| 'feature_fraction'
+		| 'bagging_fraction'
+		| 'neutralization_pct'
+		| 'feature_set'
+		| 'model_type';
+
+	type RunParams = {
+		readonly mode: 'train';
+		readonly tournament: Tournament;
+		readonly feature_set: string;
+		readonly model_type: ModelType;
+		readonly neutralization_pct: number;
+		readonly upload: boolean;
+		readonly num_rounds: number;
+		readonly learning_rate: number;
+		readonly num_leaves: number;
+		readonly max_depth: number;
+		readonly feature_fraction: number;
+		readonly bagging_fraction: number;
+		readonly early_stopping_rounds: number;
+		readonly max_train_eras: number;
+		readonly multi_target_enabled: boolean;
+		readonly neutralizer_aware: boolean;
+		readonly sample_weight_aware: boolean;
 	};
-	type QueueRun = {
-		id: string;
-		name: string;
-		provider: string;
-		status: 'ready' | 'queued';
-		budget: string;
+
+	type DraftCandidate = {
+		readonly id: string;
+		readonly name: string;
+		readonly value: string | null;
 	};
 
-	const providerNames = computeProviders.map((provider) => provider.name);
+	const modelTemplates: { id: PipelineTemplate; name: string }[] = [
+		{ id: 'baseline', name: 'Baseline' },
+		{ id: 'challenger', name: 'Challenger' },
+		{ id: 'ensemble', name: 'Ensemble' }
+	];
 
-	const fitViewOptions: FitViewOptions = { padding: 0.24 };
-	const defaultEdgeOptions: DefaultEdgeOptions = {
-		animated: true,
-		type: 'smoothstep'
-	};
+	const sweepParameters: SweepParameter[] = [
+		'learning_rate',
+		'num_rounds',
+		'num_leaves',
+		'max_depth',
+		'feature_fraction',
+		'bagging_fraction',
+		'neutralization_pct',
+		'feature_set',
+		'model_type'
+	];
 
-	function baselineNodes(): BuilderNode[] {
-		return [
-			{ id: 'data', type: 'input', position: { x: 0, y: 110 }, data: { label: 'Numerai data' } },
-			{ id: 'features', position: { x: 220, y: 110 }, data: { label: 'Feature set' } },
-			{ id: 'model', position: { x: 440, y: 110 }, data: { label: 'Baseline test' } },
-			{ id: 'validate', position: { x: 660, y: 110 }, data: { label: 'Validation' } },
-			{ id: 'submit', type: 'output', position: { x: 880, y: 110 }, data: { label: 'Submit candidate' } }
-		];
-	}
-
-	function baselineEdges(): BuilderEdge[] {
-		return [
-			{ id: 'data-features', source: 'data', target: 'features', label: 'load' },
-			{ id: 'features-model', source: 'features', target: 'model', label: 'train' },
-			{ id: 'model-validate', source: 'model', target: 'validate', label: 'score' },
-			{ id: 'validate-submit', source: 'validate', target: 'submit', label: 'if better' }
-		];
-	}
-
-	function challengerNodes(): BuilderNode[] {
-		return [
-			{ id: 'data', type: 'input', position: { x: 0, y: 120 }, data: { label: 'Numerai data' } },
-			{ id: 'features', position: { x: 210, y: 40 }, data: { label: 'Medium features' } },
-			{ id: 'neutralize', position: { x: 210, y: 200 }, data: { label: 'Neutralization' } },
-			{ id: 'model', position: { x: 450, y: 120 }, data: { label: 'Challenger test' } },
-			{ id: 'validate', position: { x: 690, y: 120 }, data: { label: 'Cross validation' } },
-			{ id: 'registry', type: 'output', position: { x: 930, y: 120 }, data: { label: 'Model registry' } }
-		];
-	}
-
-	function challengerEdges(): BuilderEdge[] {
-		return [
-			{ id: 'data-features', source: 'data', target: 'features' },
-			{ id: 'data-neutralize', source: 'data', target: 'neutralize' },
-			{ id: 'features-model', source: 'features', target: 'model' },
-			{ id: 'neutralize-model', source: 'neutralize', target: 'model' },
-			{ id: 'model-validate', source: 'model', target: 'validate' },
-			{ id: 'validate-registry', source: 'validate', target: 'registry' }
-		];
-	}
-
-	function ensembleNodes(): BuilderNode[] {
-		return [
-			{ id: 'data', type: 'input', position: { x: 0, y: 150 }, data: { label: 'Numerai data' } },
-			{ id: 'candidate-a', position: { x: 230, y: 50 }, data: { label: 'Candidate A' } },
-			{ id: 'candidate-b', position: { x: 230, y: 250 }, data: { label: 'Candidate B' } },
-			{ id: 'blend', position: { x: 480, y: 150 }, data: { label: 'Blend predictions' } },
-			{ id: 'validate', position: { x: 720, y: 150 }, data: { label: 'Compare to parent' } },
-			{ id: 'submit', type: 'output', position: { x: 960, y: 150 }, data: { label: 'Promote winner' } }
-		];
-	}
-
-	function ensembleEdges(): BuilderEdge[] {
-		return [
-			{ id: 'data-a', source: 'data', target: 'candidate-a' },
-			{ id: 'data-b', source: 'data', target: 'candidate-b' },
-			{ id: 'a-blend', source: 'candidate-a', target: 'blend' },
-			{ id: 'b-blend', source: 'candidate-b', target: 'blend' },
-			{ id: 'blend-validate', source: 'blend', target: 'validate' },
-			{ id: 'validate-submit', source: 'validate', target: 'submit' }
-		];
-	}
-
-	function nodesForPreset(preset: PresetId): BuilderNode[] {
-		if (preset === 'challenger') return challengerNodes();
-		if (preset === 'ensemble') return ensembleNodes();
-		return baselineNodes();
-	}
-
-	function edgesForPreset(preset: PresetId): BuilderEdge[] {
-		if (preset === 'challenger') return challengerEdges();
-		if (preset === 'ensemble') return ensembleEdges();
-		return baselineEdges();
-	}
-
-	const initialPreset: PresetId = 'baseline';
-	let activePreset = $state<PresetId>(initialPreset);
-	let activeProvider = $state(providerNames[0]);
-	let activeBranchId = $state('baseline-v4');
-	let selectedTemplateId = $state('baseline');
-	let sweepParameter = $state('learning_rate');
+	let busy = $state(false);
+	let selectedTemplateId = $state<PipelineTemplate>('baseline');
+	let tournament = $state<Tournament>('classic');
+	let featureSet = $state('small');
+	let modelType = $state<ModelType>('lgbm');
+	let neutralizationPct = $state(25);
+	let upload = $state(false);
+	let numRounds = $state(10000);
+	let learningRate = $state(0.005);
+	let numLeaves = $state(512);
+	let maxDepth = $state(8);
+	let featureFraction = $state(0.1);
+	let baggingFraction = $state(0.5);
+	let earlyStoppingRounds = $state(200);
+	let maxTrainEras = $state(0);
+	let multiTargetEnabled = $state(true);
+	let neutralizerAware = $state(true);
+	let sampleWeightAware = $state(true);
+	let sweepParameter = $state<SweepParameter>('learning_rate');
 	let sweepValues = $state('0.003, 0.005, 0.008, 0.012');
-	let maxRuns = $state(8);
-	let maxSpend = $state(20);
-	let branchCounter = $state(6);
-	let branchRows = $state<BranchRow[]>(lineageBranches.map((branch) => ({ ...branch })));
-	let queuedRuns = $state<QueueRun[]>([
-		{ id: 'run-101', name: 'baseline smoke test', provider: 'Modal', status: 'ready', budget: '$4 cap' },
-		{ id: 'run-102', name: 'candidate compare', provider: 'SageMaker', status: 'queued', budget: '$12 cap' }
-	]);
-	let nodes = $state.raw<BuilderNode[]>(nodesForPreset(initialPreset));
-	let edges = $state.raw<BuilderEdge[]>(edgesForPreset(initialPreset));
+	let maxRuns = $state(4);
 
-	const activeBranch = $derived(branchRows.find((branch) => branch.id === activeBranchId) ?? branchRows[0]);
 	const selectedTemplate = $derived(
 		modelTemplates.find((template) => template.id === selectedTemplateId) ?? modelTemplates[0]
 	);
-	const sweepCandidates = $derived.by(() => {
-		const values = sweepValues
-			.split(',')
-			.map((value) => value.trim())
-			.filter(Boolean)
-			.slice(0, maxRuns);
-		return values.map((value, index) => ({
-			id: `${sweepParameter}-${index + 1}`,
-			name: `${selectedTemplate.name} ${sweepParameter}=${value}`,
-			value
-		}));
-	});
+	const runParams = $derived(currentRunParams());
+	const sweepValueList = $derived(parseSweepValues(sweepValues, maxRuns));
+	const candidateRuns = $derived(
+		buildSweepCandidates({
+			templateName: selectedTemplate.name,
+			parameter: sweepParameter,
+			values: sweepValueList
+		})
+	);
+	const draftCandidates = $derived.by<DraftCandidate[]>(() =>
+		candidateRuns.length
+			? candidateRuns.map((candidate) => ({ ...candidate, value: candidate.value }))
+			: [{ id: 'single-draft', name: `${selectedTemplate.name} draft`, value: null }]
+	);
 
-	function loadPreset(preset: PresetId) {
-		activePreset = preset;
-		selectedTemplateId = preset;
-		nodes = nodesForPreset(preset);
-		edges = edgesForPreset(preset);
+	function currentRunParams(): RunParams {
+		return {
+			mode: 'train',
+			tournament,
+			feature_set: featureSet,
+			model_type: modelType,
+			neutralization_pct: neutralizationPct,
+			upload,
+			num_rounds: numRounds,
+			learning_rate: learningRate,
+			num_leaves: numLeaves,
+			max_depth: maxDepth,
+			feature_fraction: featureFraction,
+			bagging_fraction: baggingFraction,
+			early_stopping_rounds: earlyStoppingRounds,
+			max_train_eras: maxTrainEras,
+			multi_target_enabled: multiTargetEnabled,
+			neutralizer_aware: neutralizerAware,
+			sample_weight_aware: sampleWeightAware
+		};
 	}
 
-	function branchCurrent() {
-		branchCounter += 1;
-		const parent = activeBranch;
-		const id = `branch-${branchCounter}`;
-		branchRows = branchRows.map((branch) =>
-			branch.id === parent.id ? { ...branch, children: [...branch.children, id] } : branch
-		);
-		branchRows = [
-			...branchRows,
-			{
-				id,
-				name: `${parent.name}-branch-${branchCounter}`,
-				delta: 'copied graph, ready to edit',
-				score: 'pending',
-				children: []
+	async function draftModels() {
+		busy = true;
+		try {
+			for (const candidate of draftCandidates) {
+				const valueConfig = candidate.value === null ? {} : { [sweepParameter]: candidate.value };
+				const result = await createRegistryModel({
+					name: candidate.name,
+					stage: 'draft',
+					numeraiModelId: '',
+					parentModelId: '',
+					changeSummary: `${selectedTemplate.name} ${candidate.value === null ? 'base' : `${sweepParameter}=${candidate.value}`} draft`,
+					lineageJson: {
+						source: 'builder',
+						template: selectedTemplateId,
+						runConfig: {
+							...runParams,
+							...valueConfig
+						},
+						sweep: {
+							parameter: candidate.value === null ? null : sweepParameter,
+							value: candidate.value,
+							values: sweepValueList
+						}
+					}
+				});
+				if (result.errors?.length) {
+					throw new Error(result.errors.map((error) => error.message).filter(Boolean).join('; '));
+				}
 			}
-		];
-		activeBranchId = id;
-	}
-
-	function queueSweep() {
-		const additions = sweepCandidates.map((candidate, index) => ({
-			id: `queued-${Date.now()}-${index}`,
-			name: candidate.name,
-			provider: activeProvider,
-			status: 'ready' as const,
-			budget: `$${maxSpend} cap`
-		}));
-		queuedRuns = [...additions, ...queuedRuns].slice(0, 8);
+			addToast(`${draftCandidates.length} model draft${draftCandidates.length === 1 ? '' : 's'} created.`, 'success');
+			await goto('/models');
+		} catch (error) {
+			console.error(error);
+			addToast(error instanceof Error ? error.message : 'Model drafts could not be created.', 'error');
+		} finally {
+			busy = false;
+		}
 	}
 </script>
 
@@ -196,171 +173,172 @@
 </svelte:head>
 
 <AuthGate>
-<section class="builder-page">
-	<header class="page-head">
-		<div>
-			<p class="eyebrow">Builder</p>
-			<h1>Branch, sweep, and test Numerai pipelines.</h1>
-			<p>
-				Start from a preset graph, drag steps into place, branch from any run, and generate a
-				fine-grained sweep before backend wiring exists.
-			</p>
-		</div>
-		<div class="head-actions">
-			<button type="button" onclick={branchCurrent}>Branch current</button>
-			<button type="button" class="primary" onclick={queueSweep}>Queue sweep</button>
-		</div>
-	</header>
+	<section class="builder-page">
+		<header class="page-head">
+			<div>
+				<p class="eyebrow">Builder</p>
+				<h1>Draft Numerai model candidates.</h1>
+			</div>
+			<div class="head-actions">
+				<button type="button" class="primary" disabled={busy} onclick={draftModels}>
+					{busy ? 'Drafting' : 'Draft'}
+				</button>
+			</div>
+		</header>
 
-	<div class="builder-grid">
-		<aside class="sidebar">
-			<section class="panel">
-				<h2>Preset graphs</h2>
-				<div class="seg-list">
-					<button class:active={activePreset === 'baseline'} type="button" onclick={() => loadPreset('baseline')}>
-						<strong>Quick baseline</strong>
-						<span>data -> train -> validate</span>
-					</button>
-					<button class:active={activePreset === 'challenger'} type="button" onclick={() => loadPreset('challenger')}>
-						<strong>Strong challenger</strong>
-						<span>feature + neutralization path</span>
-					</button>
-					<button class:active={activePreset === 'ensemble'} type="button" onclick={() => loadPreset('ensemble')}>
-						<strong>Ensemble test</strong>
-						<span>two candidates into one blend</span>
-					</button>
+		<div class="builder-grid">
+			<section class="panel params-panel">
+				<div class="panel-head">
+					<h2>Params</h2>
+					<span>OpenOptions</span>
 				</div>
-			</section>
-
-			<section class="panel">
-				<h2>Model lineage</h2>
-				<div class="lineage">
-					{#each branchRows as branch}
-						<button
-							type="button"
-							class:active={activeBranchId === branch.id}
-							onclick={() => (activeBranchId = branch.id)}
-						>
-							<strong>{branch.name}</strong>
-							<span>{branch.delta}</span>
-							<small>{branch.score}</small>
-						</button>
-					{/each}
-				</div>
-			</section>
-		</aside>
-
-		<section class="canvas-card" aria-label="Pipeline builder canvas">
-			<SvelteFlow bind:nodes bind:edges fitView {fitViewOptions} {defaultEdgeOptions}>
-				<Background variant={BackgroundVariant.Dots} />
-				<Controls />
-				<MiniMap />
-				<Panel position="top-left">
-					<div class="canvas-badge">
-						<span>Active branch</span>
-						<strong>{activeBranch.name}</strong>
-					</div>
-				</Panel>
-			</SvelteFlow>
-		</section>
-
-		<aside class="sidebar">
-			<section class="panel">
-				<h2>Fine parameter sweep</h2>
-				<label>
-					<span>Template</span>
-					<select bind:value={selectedTemplateId}>
-						{#each modelTemplates as template}
-							<option value={template.id}>{template.name}</option>
-						{/each}
-					</select>
-				</label>
-				<label>
-					<span>Parameter</span>
-					<select bind:value={sweepParameter}>
-						<option value="learning_rate">learning_rate</option>
-						<option value="neutralization">neutralization</option>
-						<option value="feature_set">feature_set</option>
-						<option value="lookback_window">lookback_window</option>
-					</select>
-				</label>
-				<label>
-					<span>Values</span>
-					<input bind:value={sweepValues} />
-				</label>
-				<div class="limits">
+				<div class="form-grid three">
 					<label>
-						<span>Max runs</span>
-						<input type="number" min="1" max="32" bind:value={maxRuns} />
+						<span>Template</span>
+						<select bind:value={selectedTemplateId}>
+							{#each modelTemplates as template}
+								<option value={template.id}>{template.name}</option>
+							{/each}
+						</select>
 					</label>
 					<label>
-						<span>Budget</span>
-						<input type="number" min="1" max="500" bind:value={maxSpend} />
+						<span>Tournament</span>
+						<select bind:value={tournament}>
+							<option value="classic">classic</option>
+							<option value="signals">signals</option>
+						</select>
+					</label>
+					<label>
+						<span>Mode</span>
+						<input value="train" disabled />
+					</label>
+					<label>
+						<span>Feature set</span>
+						<select bind:value={featureSet}>
+							<option value="small">small</option>
+							<option value="medium">medium</option>
+							<option value="all">all</option>
+						</select>
+					</label>
+					<label>
+						<span>Model type</span>
+						<select bind:value={modelType}>
+							<option value="lgbm">lgbm</option>
+							<option value="catboost">catboost</option>
+							<option value="mlp">mlp</option>
+						</select>
+					</label>
+					<label>
+						<span>Neutralization %</span>
+						<input type="number" min="0" max="100" step="1" bind:value={neutralizationPct} />
 					</label>
 				</div>
-				<label>
-					<span>Provider</span>
-					<select bind:value={activeProvider}>
-						{#each providerNames as provider}
-							<option value={provider}>{provider}</option>
-						{/each}
-					</select>
-				</label>
-				<p class="muted">{selectedTemplate.body}</p>
+
+				<div class="form-grid four">
+					<label>
+						<span>num_rounds</span>
+						<input type="number" min="1" bind:value={numRounds} />
+					</label>
+					<label>
+						<span>learning_rate</span>
+						<input type="number" min="0" step="0.001" bind:value={learningRate} />
+					</label>
+					<label>
+						<span>num_leaves</span>
+						<input type="number" min="2" bind:value={numLeaves} />
+					</label>
+					<label>
+						<span>max_depth</span>
+						<input type="number" min="-1" bind:value={maxDepth} />
+					</label>
+					<label>
+						<span>feature_fraction</span>
+						<input type="number" min="0" max="1" step="0.01" bind:value={featureFraction} />
+					</label>
+					<label>
+						<span>bagging_fraction</span>
+						<input type="number" min="0" max="1" step="0.01" bind:value={baggingFraction} />
+					</label>
+					<label>
+						<span>early_stopping</span>
+						<input type="number" min="0" bind:value={earlyStoppingRounds} />
+					</label>
+					<label>
+						<span>max_train_eras</span>
+						<input type="number" min="0" bind:value={maxTrainEras} />
+					</label>
+				</div>
+
+				<div class="checks">
+					<label><input type="checkbox" bind:checked={multiTargetEnabled} /> <span>multi_target_enabled</span></label>
+					<label><input type="checkbox" bind:checked={neutralizerAware} /> <span>neutralizer_aware</span></label>
+					<label><input type="checkbox" bind:checked={sampleWeightAware} /> <span>sample_weight_aware</span></label>
+					<label><input type="checkbox" bind:checked={upload} /> <span>upload</span></label>
+				</div>
 			</section>
 
 			<section class="panel">
-				<h2>Generated tests</h2>
-				<div class="test-list">
-					{#each sweepCandidates as candidate}
+				<div class="panel-head">
+					<h2>Sweep</h2>
+					<span>{draftCandidates.length} drafts</span>
+				</div>
+				<div class="form-grid two">
+					<label>
+						<span>Parameter</span>
+						<select bind:value={sweepParameter}>
+							{#each sweepParameters as parameter}
+								<option value={parameter}>{parameter}</option>
+							{/each}
+						</select>
+					</label>
+					<label>
+						<span>Values</span>
+						<input bind:value={sweepValues} />
+					</label>
+					<label>
+						<span>Max drafts</span>
+						<input type="number" min="1" max="64" bind:value={maxRuns} />
+					</label>
+				</div>
+			</section>
+
+			<section class="panel preview-panel">
+				<div class="panel-head">
+					<h2>Drafts</h2>
+					<span>Models</span>
+				</div>
+				<div class="draft-list">
+					{#each draftCandidates as candidate}
 						<div>
 							<strong>{candidate.name}</strong>
-							<span>{activeProvider} / ${maxSpend} cap</span>
+							<span>draft model</span>
 						</div>
 					{/each}
 				</div>
 			</section>
-		</aside>
-	</div>
-
-	<section class="queue">
-		<div>
-			<p class="eyebrow">Run queue</p>
-			<h2>One-click tests become queued jobs.</h2>
-		</div>
-		<div class="queue-list">
-			{#each queuedRuns as run}
-				<article>
-					<span>{run.status}</span>
-					<strong>{run.name}</strong>
-					<p>{run.provider} / {run.budget}</p>
-				</article>
-			{/each}
 		</div>
 	</section>
-</section>
 </AuthGate>
 
 <style>
 	.builder-page {
 		display: flex;
 		flex-direction: column;
-		gap: 1.5rem;
+		gap: 1.25rem;
 		padding: 1rem 0 4rem;
 	}
 
-	.page-head,
-	.queue {
+	.page-head {
 		display: flex;
 		justify-content: space-between;
-		gap: 1.5rem;
+		gap: 1rem;
 		align-items: end;
 		border-bottom: 1px solid var(--border-light);
-		padding-bottom: 1.5rem;
+		padding-bottom: 1.2rem;
 	}
 
 	.eyebrow {
-		margin: 0 0 0.6rem;
+		margin: 0 0 0.45rem;
 		color: var(--text-muted);
 		font-family: var(--font-mono);
 		font-size: 0.72rem;
@@ -376,22 +354,14 @@
 	}
 
 	h1 {
-		max-width: 12ch;
-		font-size: clamp(3rem, 7vw, 5.8rem);
-		line-height: 0.92;
+		font-size: clamp(2.6rem, 6vw, 4.8rem);
+		line-height: 0.95;
 		letter-spacing: 0;
-	}
-
-	.page-head p {
-		max-width: 62ch;
-		margin-top: 1rem;
-		color: var(--text-secondary);
-		line-height: 1.65;
 	}
 
 	.head-actions {
 		display: flex;
-		gap: 0.6rem;
+		gap: 0.55rem;
 	}
 
 	button,
@@ -400,43 +370,37 @@
 		font: inherit;
 	}
 
-	.head-actions button,
-	.panel button {
+	button {
 		border: 1px solid var(--border);
 		border-radius: 6px;
 		background: #fff;
 		color: var(--text);
 		cursor: pointer;
 		font-weight: 720;
-	}
-
-	.head-actions button {
-		min-height: 2.6rem;
+		min-height: 2.5rem;
 		padding: 0 0.9rem;
 	}
 
-	.head-actions button.primary {
+	button.primary {
 		background: var(--text);
 		color: #fff;
 		border-color: var(--text);
 	}
 
+	button:disabled {
+		cursor: not-allowed;
+		opacity: 0.55;
+	}
+
 	.builder-grid {
 		display: grid;
-		grid-template-columns: 260px minmax(0, 1fr) 300px;
+		grid-template-columns: minmax(0, 1.4fr) minmax(320px, 0.8fr);
 		gap: 1rem;
 		align-items: start;
 	}
 
-	.sidebar {
-		display: flex;
-		flex-direction: column;
-		gap: 1rem;
-	}
-
 	.panel,
-	.canvas-card,
-	.queue-list article {
+	.draft-list div {
 		border: 1px solid var(--border);
 		border-radius: 8px;
 		background: var(--bg-card);
@@ -447,89 +411,32 @@
 		padding: 1rem;
 	}
 
-	.panel h2 {
-		margin-bottom: 0.8rem;
+	.params-panel {
+		grid-row: span 2;
+	}
+
+	.panel-head {
+		display: flex;
+		justify-content: space-between;
+		gap: 1rem;
+		align-items: baseline;
+		margin-bottom: 0.9rem;
+	}
+
+	.panel-head h2 {
 		font-size: 1rem;
 	}
 
-	.seg-list,
-	.lineage,
-	.test-list,
-	.queue-list {
-		display: grid;
-		gap: 0.5rem;
-	}
-
-	.seg-list button,
-	.lineage button {
-		display: grid;
-		gap: 0.25rem;
-		width: 100%;
-		padding: 0.8rem;
-		text-align: left;
-	}
-
-	.seg-list button.active,
-	.lineage button.active {
-		background: var(--hover-bg);
-		border-color: var(--text);
-	}
-
-	.seg-list span,
-	.lineage span,
-	.lineage small,
-	.test-list span,
-	.queue-list span,
-	.muted {
+	.panel-head span,
+	label > span,
+	.draft-list span {
 		color: var(--text-secondary);
 		font-size: 0.78rem;
 		line-height: 1.45;
 	}
 
-	.lineage small,
-	.queue-list span {
-		color: var(--green);
-		font-family: var(--font-mono);
-		font-weight: 800;
-	}
-
-	.canvas-card {
-		height: 690px;
-		overflow: hidden;
-	}
-
-	:global(.svelte-flow__node) {
-		border: 1px solid var(--border) !important;
-		border-radius: 8px !important;
-		background: #fff !important;
-		color: var(--text) !important;
-		font-weight: 760 !important;
-		box-shadow: var(--shadow-md) !important;
-	}
-
-	:global(.svelte-flow__edge-path) {
-		stroke: var(--text) !important;
-		stroke-width: 1.5 !important;
-	}
-
-	:global(.svelte-flow__minimap) {
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		overflow: hidden;
-	}
-
-	.canvas-badge {
-		display: grid;
-		gap: 0.2rem;
-		border: 1px solid var(--border);
-		border-radius: 6px;
-		background: rgba(255, 255, 255, 0.92);
-		padding: 0.55rem 0.7rem;
-		box-shadow: var(--shadow-sm);
-	}
-
-	.canvas-badge span,
-	label span {
+	label > span,
+	.panel-head span {
 		color: var(--text-muted);
 		font-family: var(--font-mono);
 		font-size: 0.66rem;
@@ -541,7 +448,7 @@
 	label {
 		display: grid;
 		gap: 0.35rem;
-		margin-bottom: 0.75rem;
+		min-width: 0;
 	}
 
 	select,
@@ -552,71 +459,77 @@
 		border-radius: 6px;
 		background: var(--bg-input);
 		color: var(--text);
+		min-height: 2.45rem;
 		padding: 0.55rem 0.65rem;
 	}
 
-	.limits {
-		display: grid;
-		grid-template-columns: 1fr 1fr;
-		gap: 0.6rem;
+	input:disabled {
+		color: var(--text-secondary);
 	}
 
-	.test-list div {
+	.form-grid {
 		display: grid;
-		gap: 0.25rem;
+		gap: 0.75rem;
+		margin-bottom: 1rem;
+	}
+
+	.form-grid.two {
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+	}
+
+	.form-grid.three {
+		grid-template-columns: repeat(3, minmax(0, 1fr));
+	}
+
+	.form-grid.four {
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+	}
+
+	.checks {
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 0.55rem;
+	}
+
+	.checks label {
+		display: flex;
+		align-items: center;
+		gap: 0.45rem;
+		min-height: 2.3rem;
 		border: 1px solid var(--border-light);
 		border-radius: 6px;
+		padding: 0 0.65rem;
+		background: var(--bg-input);
+	}
+
+	.checks input {
+		width: 16px;
+		min-height: 16px;
+		padding: 0;
+	}
+
+	.draft-list {
+		display: grid;
+		gap: 0.5rem;
+	}
+
+	.draft-list div {
+		display: grid;
+		gap: 0.25rem;
+		border-color: var(--border-light);
 		padding: 0.65rem;
 		background: var(--bg-input);
 	}
 
-	.queue {
-		align-items: start;
-		border-bottom: none;
-		border-top: 1px solid var(--border-light);
-		padding-top: 1.5rem;
-	}
-
-	.queue h2 {
-		font-size: clamp(1.8rem, 3vw, 3rem);
-		line-height: 1;
-	}
-
-	.queue-list {
-		grid-template-columns: repeat(4, minmax(0, 1fr));
-		min-width: 58%;
-	}
-
-	.queue-list article {
-		padding: 1rem;
-	}
-
-	.queue-list strong {
-		display: block;
-		margin: 0.4rem 0;
-	}
-
-	@media (max-width: 1180px) {
-		.builder-grid {
-			grid-template-columns: 1fr;
-		}
-
-		.canvas-card {
-			height: 620px;
-			order: -1;
-		}
-
-		.sidebar {
-			display: grid;
-			grid-template-columns: 1fr 1fr;
-		}
-
-		.queue {
-			display: grid;
-		}
-
-		.queue-list {
+	@media (max-width: 1100px) {
+		.builder-grid,
+		.form-grid.four,
+		.checks {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+
+		.params-panel {
+			grid-row: auto;
 		}
 	}
 
@@ -627,21 +540,17 @@
 		}
 
 		.head-actions,
-		.sidebar,
-		.queue-list {
+		.builder-grid,
+		.form-grid.two,
+		.form-grid.three,
+		.form-grid.four,
+		.checks {
+			display: grid;
 			grid-template-columns: 1fr;
 		}
 
-		.head-actions {
-			display: grid;
-		}
-
-		.canvas-card {
-			height: 560px;
-		}
-
 		h1 {
-			font-size: clamp(2.6rem, 16vw, 4rem);
+			font-size: clamp(2.4rem, 15vw, 3.7rem);
 		}
 	}
 </style>

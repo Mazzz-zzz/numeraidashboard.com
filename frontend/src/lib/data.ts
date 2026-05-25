@@ -7,7 +7,7 @@ let _client: ReturnType<typeof generateClient<Schema>> | null = null;
 
 export function dataClient() {
 	if (!_client) {
-		_client = generateClient<Schema>();
+		_client = generateClient<Schema>({ authMode: 'userPool' });
 	}
 	return _client;
 }
