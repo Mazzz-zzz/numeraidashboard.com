@@ -18,6 +18,15 @@ type Client = ReturnType<typeof dataClient>;
 type Pipeline = Schema['Pipeline']['type'];
 type ModelBranch = Schema['ModelBranch']['type'];
 
+export const DEFAULT_MODAL_SMOKE_HYPERPARAMS = {
+	feature_set: 'small',
+	max_train_eras: 20,
+	num_rounds: 10,
+	single_target: true,
+	target_col: 'target_ender_20',
+	target_cols: ['target_ender_20']
+} as const;
+
 export type ModelTrainingResult = {
 	readonly model: ModelRegistryItem;
 	readonly run: TrainingRun;
@@ -342,10 +351,15 @@ export function providerConfigForLaunch(provider: ComputeProvider, gpuType: stri
 	}
 	if (provider.providerType === 'modal') {
 		const modal = recordOrNull(config?.modal) ?? {};
+		const hyperparams = recordOrNull(modal.hyperparams);
 		return jsonObjectValue({
 			...config,
 			modal: {
 				...modal,
+				hyperparams: {
+					...DEFAULT_MODAL_SMOKE_HYPERPARAMS,
+					...hyperparams
+				},
 				gpuType: selectedGpu
 			}
 		});

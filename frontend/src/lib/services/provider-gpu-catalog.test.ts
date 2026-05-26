@@ -11,10 +11,16 @@ describe('provider GPU catalog', () => {
 		expect(options).toEqual([{ value: 'H100_80GB', label: 'H100 SXM 80GB' }]);
 	});
 
-	it('maps Modal L40S launch labels to provider GPU identifiers', () => {
-		const selected = selectedGpuForProvider({ providerType: 'modal', credentialsJson: null } as never, 'L40S');
+	it('maps Modal launch labels to runner GPU identifiers', () => {
+		const selected = selectedGpuForProvider({ providerType: 'modal', credentialsJson: null } as never, 'a100-80gb');
 
-		expect(selected).toEqual({ value: 'L40S', label: 'L40S 48GB' });
+		expect(selected).toEqual({ value: 'a100-80gb', label: 'A100 80GB' });
+	});
+
+	it('defaults Modal launches to the inexpensive T4 runner identifier', () => {
+		const selected = selectedGpuForProvider({ providerType: 'modal', credentialsJson: null } as never, null);
+
+		expect(selected).toEqual({ value: 't4', label: 'T4' });
 	});
 
 	it('rejects stale or unsupported GPU selections before launch payloads are built', () => {
@@ -22,7 +28,7 @@ describe('provider GPU catalog', () => {
 			assertProviderGpu(
 				{
 					providerType: 'modal',
-					credentialsJson: { modal: { gpuCatalog: ['L40S'] } }
+					credentialsJson: { modal: { gpuCatalog: ['t4'] } }
 				} as never,
 				'A10G'
 			)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { launchTrainingToast, providerConfigForLaunch } from './model-launch-service';
+import { DEFAULT_MODAL_SMOKE_HYPERPARAMS, launchTrainingToast, providerConfigForLaunch } from './model-launch-service';
 
 describe('model launch service', () => {
 	it('uses an error toast for failed launch actions', () => {
@@ -51,10 +51,44 @@ describe('model launch service', () => {
 				providerType: 'modal',
 				credentialsJson: { modal: { launchUrl: 'https://modal.example/launch' } }
 			} as never,
-			'L40S'
+			't4'
 		);
 
-		expect(config).toEqual({ modal: { launchUrl: 'https://modal.example/launch', gpuType: 'L40S' } });
+		expect(config).toEqual({
+			modal: {
+				launchUrl: 'https://modal.example/launch',
+				hyperparams: DEFAULT_MODAL_SMOKE_HYPERPARAMS,
+				gpuType: 't4'
+			}
+		});
+	});
+
+	it('preserves configured Modal smoke hyperparam overrides and array payloads', () => {
+		const config = providerConfigForLaunch(
+			{
+				providerType: 'modal',
+				credentialsJson: {
+					modal: {
+						hyperparams: {
+							num_rounds: 25,
+							target_cols: ['target_jerome_20']
+						}
+					}
+				}
+			} as never,
+			'a10g'
+		);
+
+		expect(config).toMatchObject({
+			modal: {
+				hyperparams: {
+					...DEFAULT_MODAL_SMOKE_HYPERPARAMS,
+					num_rounds: 25,
+					target_cols: ['target_jerome_20']
+				},
+				gpuType: 'a10g'
+			}
+		});
 	});
 
 	it('rejects invalid provider GPU choices before launch submission', () => {
@@ -62,7 +96,7 @@ describe('model launch service', () => {
 			providerConfigForLaunch(
 				{
 					providerType: 'modal',
-					credentialsJson: { modal: { gpuCatalog: ['L40S'] } }
+					credentialsJson: { modal: { gpuCatalog: ['t4'] } }
 				} as never,
 				'A100'
 			)

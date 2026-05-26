@@ -46,6 +46,63 @@ aws_secret = modal.Secret.from_name(
 )
 hf_secret = modal.Secret.from_name("huggingface-credentials")
 
+HP_TO_ENV = {
+    "num_rounds": "ML_DEFAULT_NUM_ROUNDS",
+    "learning_rate": "ML_DEFAULT_LEARNING_RATE",
+    "num_leaves": "ML_DEFAULT_NUM_LEAVES",
+    "max_depth": "ML_DEFAULT_MAX_DEPTH",
+    "feature_fraction": "ML_DEFAULT_FEATURE_FRACTION",
+    "bagging_fraction": "ML_DEFAULT_BAGGING_FRACTION",
+    "min_data_in_leaf": "ML_DEFAULT_MIN_DATA_IN_LEAF",
+    "reg_alpha": "ML_DEFAULT_REG_ALPHA",
+    "reg_lambda": "ML_DEFAULT_REG_LAMBDA",
+    "min_split_gain": "ML_DEFAULT_MIN_SPLIT_GAIN",
+    "path_smooth": "ML_DEFAULT_PATH_SMOOTH",
+    "max_bin": "ML_DEFAULT_MAX_BIN",
+    "early_stopping_rounds": "ML_EARLY_STOPPING_ROUNDS",
+    "max_train_eras": "ML_MAX_TRAIN_ERAS",
+    "neutralization_proportion": "ML_NEUTRALIZATION_PROPORTION",
+    "multi_target_enabled": "ML_MULTI_TARGET_ENABLED",
+    "single_target_mode": "ML_SINGLE_TARGET_MODE",
+    "target_col": "ML_TARGET_COL",
+    "target_cols": "ML_TARGET_COLS",
+    "enable_era_stats": "ML_ENABLE_ERA_STATS",
+    "enable_group_aggregates": "ML_ENABLE_GROUP_AGGREGATES",
+}
+
+
+def _validate_hyperparams(hyperparams: dict) -> dict:
+    if not isinstance(hyperparams, dict):
+        raise ValueError("hyperparams must be an object")
+    if "target_cols" in hyperparams and not isinstance(hyperparams["target_cols"], list):
+        raise ValueError("target_cols must be a JSON array of target column names")
+    target_cols = hyperparams.get("target_cols")
+    if isinstance(target_cols, list) and not all(isinstance(col, str) and col.strip() for col in target_cols):
+        raise ValueError("target_cols must contain non-empty strings")
+    return hyperparams
+
+
+def _env_value(value) -> str:
+    import json
+
+    return json.dumps(value) if isinstance(value, (list, dict)) else str(value)
+
+
+def _apply_hyperparam_env(hyperparams: dict) -> None:
+    import os
+
+    for env_key in HP_TO_ENV.values():
+        os.environ.pop(env_key, None)
+    for hp_key, env_key in HP_TO_ENV.items():
+        if hp_key in hyperparams:
+            os.environ[env_key] = _env_value(hyperparams[hp_key])
+
+
+def _is_modal_cancelled_exception(error: Exception) -> bool:
+    name = type(error).__name__.lower()
+    message = str(error).lower()
+    return "cancel" in name or "cancel" in message
+
 
 def _run_training_impl(
     source_tarball_s3: str,
@@ -124,33 +181,8 @@ def _run_training_inner(
     os.unlink(tar_path)
 
     # 2. Set up environment (same as bootstrap.py HP_TO_ENV)
-    HP_TO_ENV = {
-        "num_rounds": "ML_DEFAULT_NUM_ROUNDS",
-        "learning_rate": "ML_DEFAULT_LEARNING_RATE",
-        "num_leaves": "ML_DEFAULT_NUM_LEAVES",
-        "max_depth": "ML_DEFAULT_MAX_DEPTH",
-        "feature_fraction": "ML_DEFAULT_FEATURE_FRACTION",
-        "bagging_fraction": "ML_DEFAULT_BAGGING_FRACTION",
-        "min_data_in_leaf": "ML_DEFAULT_MIN_DATA_IN_LEAF",
-        "reg_alpha": "ML_DEFAULT_REG_ALPHA",
-        "reg_lambda": "ML_DEFAULT_REG_LAMBDA",
-        "min_split_gain": "ML_DEFAULT_MIN_SPLIT_GAIN",
-        "path_smooth": "ML_DEFAULT_PATH_SMOOTH",
-        "max_bin": "ML_DEFAULT_MAX_BIN",
-        "early_stopping_rounds": "ML_EARLY_STOPPING_ROUNDS",
-        "max_train_eras": "ML_MAX_TRAIN_ERAS",
-        "neutralization_proportion": "ML_NEUTRALIZATION_PROPORTION",
-        "multi_target_enabled": "ML_MULTI_TARGET_ENABLED",
-        "single_target_mode": "ML_SINGLE_TARGET_MODE",
-        "target_col": "ML_TARGET_COL",
-        "target_cols": "ML_TARGET_COLS",
-        "enable_era_stats": "ML_ENABLE_ERA_STATS",
-        "enable_group_aggregates": "ML_ENABLE_GROUP_AGGREGATES",
-    }
-    for hp_key, env_key in HP_TO_ENV.items():
-        if hp_key in hyperparams:
-            val = hyperparams[hp_key]
-            os.environ[env_key] = json.dumps(val) if isinstance(val, (list, dict)) else str(val)
+    hyperparams = _validate_hyperparams(hyperparams)
+    _apply_hyperparam_env(hyperparams)
 
     # 3. Add source to Python path and run training
     sys.path.insert(0, work_dir)
@@ -409,7 +441,10 @@ def spawn_training(body: dict):
     """
     gpu = body.get("gpu", "a10g").lower()
     job_name = body["job_name"]
-    hyperparams = body.get("hyperparams", {})
+    try:
+        hyperparams = _validate_hyperparams(body.get("hyperparams", {}))
+    except ValueError as e:
+        return {"status": "error", "detail": str(e)}
     s3_bucket = body.get("s3_bucket", "openoptions-ml")
     source_uri = f"s3://{s3_bucket}/code/ml-source.tar.gz"
 
@@ -500,6 +535,8 @@ def job_status(body: dict):
     except TimeoutError:
         return {"status": "running"}
     except Exception as e:
+        if _is_modal_cancelled_exception(e):
+            return {"status": "cancelled", "error": str(e)}
         return {"status": "failed", "error": str(e)}
 
     return {"status": "completed", "result": result}
