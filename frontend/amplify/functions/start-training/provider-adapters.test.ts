@@ -78,6 +78,49 @@ describe('training provider adapters', () => {
 		expect(result.logTail).toContain('Modal dry run prepared h100');
 	});
 
+	it('launches Modal jobs through the configured provider endpoint with selected GPU config', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ call_id: 'modal-job-123', status: 'queued' }), { status: 200 })
+		);
+
+		const result = await launchTrainingJob({
+			runId: 'run-modal',
+			providerId: 'provider-modal',
+			providerType: 'modal',
+			apiKey: 'ak-test',
+			apiSecret: 'as-test',
+			providerConfigJson: {
+				modal: {
+					launchUrl: 'https://modal.example/launch',
+					gpuType: 'L40S',
+					gpuCount: 1,
+				},
+			},
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			status: 'queued',
+			providerJobId: 'modal-job-123',
+			error: null,
+		});
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'https://modal.example/launch',
+			expect.objectContaining({
+				method: 'POST',
+				body: expect.stringContaining('"gpu":"L40S"'),
+			})
+		);
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'https://modal.example/launch',
+			expect.objectContaining({
+				body: expect.stringContaining('"run_id":"run-modal"'),
+			})
+		);
+		fetchSpy.mockRestore();
+	});
+
 	it('prepares Prime Intellect compute pod launches with explicit dry-run config', async () => {
 		const result = await launchTrainingJob({
 			runId: 'run-prime',

@@ -11,6 +11,7 @@ import {
 	updateTrainingRunFromAction,
 	type TrainingActionResult
 } from './training-service';
+import { assertProviderGpu } from './provider-gpu-catalog';
 
 type Client = ReturnType<typeof dataClient>;
 
@@ -80,7 +81,7 @@ export async function launchModelDraft(
 		{
 			runId: run.id,
 			provider: input.provider,
-			providerConfigJson: providerConfigWithGpu(input.provider, input.gpuType ?? null)
+			providerConfigJson: providerConfigForLaunch(input.provider, input.gpuType ?? null)
 		},
 		client
 	);
@@ -325,21 +326,60 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 	}
 }
 
-function providerConfigWithGpu(provider: ComputeProvider, gpuType: string | null): unknown {
-	if (provider.providerType !== 'prime_intellect' || !gpuType?.trim()) return provider.credentialsJson ?? null;
-	const config = jsonRecord(provider.credentialsJson);
-	const prime = recordOrNull(config.primeIntellect) ?? recordOrNull(config.prime_intellect) ?? {};
+export function providerConfigForLaunch(provider: ComputeProvider, gpuType: string | null): unknown {
+	const config = jsonObjectValue(provider.credentialsJson);
+	const selectedGpu = assertProviderGpu(provider, gpuType);
+	if (!selectedGpu) return config;
+	if (provider.providerType === 'prime_intellect') {
+		const prime = recordOrNull(config?.primeIntellect) ?? recordOrNull(config?.prime_intellect) ?? {};
+		return jsonObjectValue({
+			...config,
+			primeIntellect: {
+				...prime,
+				gpuType: selectedGpu
+			}
+		});
+	}
+	if (provider.providerType === 'modal') {
+		const modal = recordOrNull(config?.modal) ?? {};
+		return jsonObjectValue({
+			...config,
+			modal: {
+				...modal,
+				gpuType: selectedGpu
+			}
+		});
+	}
+	return config;
+}
+
+function jsonObjectValue(value: unknown): Record<string, unknown> | null {
+	const record = jsonRecord(value);
+	if (!record) return null;
 	return {
-		...config,
-		primeIntellect: {
-			...prime,
-			gpuType: gpuType.trim()
-		}
+		...Object.fromEntries(
+			Object.entries(record)
+				.map(([key, val]) => [key, jsonCompatibleValue(val)] as const)
+				.filter((entry): entry is readonly [string, Exclude<ReturnType<typeof jsonCompatibleValue>, undefined>] => entry[1] !== undefined)
+		)
 	};
 }
 
 function recordOrNull(value: unknown): Record<string, unknown> | null {
 	return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+}
+
+function jsonCompatibleValue(value: unknown): unknown {
+	if (value === undefined || typeof value === 'function' || typeof value === 'symbol') return undefined;
+	if (value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') return value;
+	if (Array.isArray(value)) return value.map(jsonCompatibleValue).filter((item) => item !== undefined);
+	const record = recordOrNull(value);
+	if (!record) return undefined;
+	return Object.fromEntries(
+		Object.entries(record)
+			.map(([key, val]) => [key, jsonCompatibleValue(val)] as const)
+			.filter((entry): entry is readonly [string, Exclude<ReturnType<typeof jsonCompatibleValue>, undefined>] => entry[1] !== undefined)
+	);
 }
 
 function throwGraphQLError(errors: readonly { message?: string }[] | undefined, fallback: string): void {

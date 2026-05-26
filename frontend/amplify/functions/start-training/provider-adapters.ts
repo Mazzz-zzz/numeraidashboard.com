@@ -17,7 +17,9 @@ export type TrainingLaunchInput = {
 	readonly providerId: string | null | undefined;
 	readonly providerType: string | null | undefined;
 	readonly apiKey?: string | null;
+	readonly apiSecret?: string | null;
 	readonly apiKeyRef?: string | null;
+	readonly apiSecretRef?: string | null;
 	readonly baseUrl?: string | null;
 	readonly workspaceId?: string | null;
 	readonly providerConfigJson?: unknown;
@@ -47,7 +49,9 @@ type RequiredLaunchInput = {
 	readonly providerId: string;
 	readonly providerType: TrainingProviderType;
 	readonly apiKey?: string | null;
+	readonly apiSecret?: string | null;
 	readonly apiKeyRef?: string | null;
+	readonly apiSecretRef?: string | null;
 	readonly baseUrl?: string | null;
 	readonly workspaceId?: string | null;
 	readonly providerConfigJson?: unknown;
@@ -83,7 +87,9 @@ export async function launchTrainingJob(input: TrainingLaunchInput): Promise<Tra
 		providerId,
 		providerType,
 		apiKey: input.apiKey,
+		apiSecret: input.apiSecret,
 		apiKeyRef: input.apiKeyRef,
+		apiSecretRef: input.apiSecretRef,
 		baseUrl: input.baseUrl,
 		workspaceId: input.workspaceId,
 		providerConfigJson: input.providerConfigJson,
@@ -100,6 +106,10 @@ const adapters: Record<TrainingProviderType, ProviderAdapter> = {
 			return launchModalTraining({
 				runId: input.runId,
 				providerId: input.providerId,
+				apiKey: input.apiKey,
+				apiSecret: input.apiSecret,
+				apiKeyRef: input.apiKeyRef,
+				apiSecretRef: input.apiSecretRef,
 				baseUrl: input.baseUrl,
 				workspaceId: input.workspaceId,
 				providerConfigJson: input.providerConfigJson,
