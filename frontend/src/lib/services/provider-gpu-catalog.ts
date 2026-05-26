@@ -16,10 +16,12 @@ const fallbackGpuCatalogs: Partial<Record<ProviderType, readonly GpuOption[]>> =
 		{ value: 'H100_80GB', label: 'H100 80GB' }
 	],
 	modal: [
-		{ value: 'L40S', label: 'L40S 48GB' },
-		{ value: 'A100', label: 'A100 40GB' },
-		{ value: 'A100-80GB', label: 'A100 80GB' },
-		{ value: 'H100', label: 'H100 80GB' }
+		{ value: 't4', label: 'T4' },
+		{ value: 'a10g', label: 'A10G' },
+		{ value: 'l4', label: 'L4' },
+		{ value: 'a100', label: 'A100 40GB' },
+		{ value: 'a100-80gb', label: 'A100 80GB' },
+		{ value: 'h100', label: 'H100 80GB' }
 	]
 };
 

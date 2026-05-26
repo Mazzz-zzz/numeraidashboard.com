@@ -103,6 +103,30 @@ describe('training function status transitions', () => {
 		fetchSpy.mockRestore();
 	});
 
+	it('keeps cancelled Modal calls distinct from failed training', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(JSON.stringify({ status: 'cancelled', error: 'Function call was cancelled' }), { status: 200 })
+		);
+
+		const result = await pollTrainingJob({
+			runId: 'run-1',
+			providerType: 'modal',
+			providerJobId: 'modal-job-123',
+			apiKey: 'ak-test',
+			apiSecret: 'as-test',
+			providerConfigJson: { modal: { statusUrl: 'https://modal.example/status/{jobId}' } },
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			status: 'cancelled',
+			providerJobId: 'modal-job-123',
+			error: 'Function call was cancelled',
+		});
+		fetchSpy.mockRestore();
+	});
+
 	it('cancels queued and provider-backed jobs consistently', async () => {
 		expect(
 			await cancelTrainingJob({

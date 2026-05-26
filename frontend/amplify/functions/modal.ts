@@ -92,6 +92,7 @@ const ssm = new SSMClient({});
 
 const DEFAULT_APP_HOST = 'almaz--openoptions-ml';
 const DEFAULT_S3_BUCKET = 'openoptions-ml';
+const MODAL_HEALTHCHECK_CALL_ID = 'numeraidashboard-healthcheck';
 
 export async function launchModalTraining(
 	input: ModalTrainingLaunchInput,
@@ -133,6 +134,17 @@ export async function launchModalTraining(
 	const url = settings.launchUrl ?? modalEndpoint(settings.appHost, 'spawn-training', input.baseUrl);
 	try {
 		const credentials = await resolveModalCredentials(input, deps.secretResolver);
+		const healthBaseUrl = modalHealthBaseUrl(settings.launchUrl, input.baseUrl);
+		if (healthBaseUrl !== null) {
+			const health = await verifyModalControlEndpoints({
+				fetchFn,
+				credentials,
+				appHost: settings.appHost,
+				baseUrl: healthBaseUrl,
+				checkedAt: input.checkedAt
+			});
+			if (!health.ok) return health;
+		}
 		const resp = await fetchFn(url, {
 			method: 'POST',
 			headers: modalHeaders(credentials, { 'Content-Type': 'application/json' }),
@@ -285,8 +297,8 @@ export async function pollModalJob(
 		const innerResult = asRecord(result?.result);
 		const metrics = asRecord(body?.metricsJson) ?? innerResult ?? result ?? { providerStatus: remoteStatus };
 		return {
-			ok: status !== 'failed' && error === null,
-			status: error ? 'failed' : status,
+			ok: status !== 'failed' && (error === null || status === 'cancelled'),
+			status: error && status !== 'cancelled' ? 'failed' : status,
 			providerJobId: input.providerJobId,
 			checkedAt: input.checkedAt,
 			logTail: stringFrom(body?.logTail) ?? stringFrom(body?.logs) ?? `Modal call ${input.providerJobId} status=${remoteStatus}.`,
@@ -298,6 +310,46 @@ export async function pollModalJob(
 	} catch (e) {
 		return failure(e instanceof Error ? e.message : String(e), input.checkedAt, input.providerJobId);
 	}
+}
+
+async function verifyModalControlEndpoints(input: {
+	readonly fetchFn: FetchFn;
+	readonly credentials: ModalCredentials | null;
+	readonly appHost: string;
+	readonly baseUrl?: string | null;
+	readonly checkedAt: string;
+}): Promise<ModalActionResult> {
+	const endpoints = [
+		{ name: 'job-status', url: modalEndpoint(input.appHost, 'job-status', input.baseUrl) },
+		{ name: 'job-cancel', url: modalEndpoint(input.appHost, 'job-cancel', input.baseUrl) },
+	] as const;
+
+	for (const endpoint of endpoints) {
+		const resp = await input.fetchFn(endpoint.url, {
+			method: 'POST',
+			headers: modalHeaders(input.credentials, { 'Content-Type': 'application/json' }),
+			body: JSON.stringify({ call_id: MODAL_HEALTHCHECK_CALL_ID }),
+		});
+		if (resp.status === 404) {
+			return failure(
+				`Modal endpoint ${endpoint.name} is missing. Redeploy ml/sagemaker/modal_runner.py before launching training.`,
+				input.checkedAt,
+				null
+			);
+		}
+	}
+
+	return {
+		ok: true,
+		status: 'queued',
+		providerJobId: null,
+		checkedAt: input.checkedAt,
+		logTail: 'Modal control endpoints are reachable.',
+		error: null,
+		costUsd: null,
+		metricsJson: null,
+		artifactUri: null,
+	};
 }
 
 export async function cancelModalJob(
@@ -389,6 +441,11 @@ function modalEndpoint(appHost: string, fnSlug: string, baseUrl: string | null |
 		}
 	}
 	return `https://${appHost}-${fnSlug}.modal.run`;
+}
+
+function modalHealthBaseUrl(launchUrl: string | null, baseUrl: string | null | undefined): string | null | undefined {
+	if (!launchUrl) return baseUrl;
+	return /-spawn-training\.modal\.run\/?$/i.test(launchUrl.trim()) ? launchUrl : null;
 }
 
 function modalHeaders(credentials: ModalCredentials | null, extra: HeadersInit = {}): HeadersInit {

@@ -92,8 +92,12 @@ describe('training provider adapters', () => {
 			providerConfigJson: {
 				modal: {
 					launchUrl: 'https://modal.example/launch',
-					gpuType: 'L40S',
+					gpuType: 't4',
 					gpuCount: 1,
+					hyperparams: {
+						feature_set: 'small',
+						target_cols: ['target_ender_20'],
+					},
 				},
 			},
 			checkedAt,
@@ -109,7 +113,7 @@ describe('training provider adapters', () => {
 			'https://modal.example/launch',
 			expect.objectContaining({
 				method: 'POST',
-				body: expect.stringContaining('"gpu":"L40S"'),
+				body: expect.stringContaining('"gpu":"t4"'),
 			})
 		);
 		expect(fetchSpy).toHaveBeenCalledWith(
@@ -117,6 +121,77 @@ describe('training provider adapters', () => {
 			expect.objectContaining({
 				body: expect.stringContaining('"run_id":"run-modal"'),
 			})
+		);
+		expect(fetchSpy).toHaveBeenCalledWith(
+			'https://modal.example/launch',
+			expect.objectContaining({
+				body: expect.stringContaining('"target_cols":["target_ender_20"]'),
+			})
+		);
+		fetchSpy.mockRestore();
+	});
+
+	it('fails Modal launch before spawn when required control endpoints are stale', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('', { status: 404 }));
+
+		const result = await launchTrainingJob({
+			runId: 'run-modal',
+			providerId: 'provider-modal',
+			providerType: 'modal',
+			apiKey: 'ak-test',
+			apiSecret: 'as-test',
+			baseUrl: 'https://almaz--openoptions-ml-spawn-training.modal.run',
+			providerConfigJson: { modal: { gpuType: 't4' } },
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: false,
+			status: 'failed',
+			providerJobId: null,
+			error: 'Modal endpoint job-status is missing. Redeploy ml/sagemaker/modal_runner.py before launching training.',
+		});
+		expect(fetchSpy).toHaveBeenCalledOnce();
+		fetchSpy.mockRestore();
+	});
+
+	it('preflights status and cancel endpoints derived from explicit Modal spawn URLs', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'error', detail: 'Unknown call_id' }), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'error', detail: 'Unknown call_id' }), { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify({ call_id: 'modal-job-456', status: 'queued' }), { status: 200 }));
+
+		const result = await launchTrainingJob({
+			runId: 'run-modal',
+			providerId: 'provider-modal',
+			providerType: 'modal',
+			apiKey: 'ak-test',
+			apiSecret: 'as-test',
+			providerConfigJson: {
+				modal: {
+					launchUrl: 'https://almaz--openoptions-ml-spawn-training.modal.run',
+					gpuType: 't4',
+				},
+			},
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({ ok: true, providerJobId: 'modal-job-456' });
+		expect(fetchSpy).toHaveBeenNthCalledWith(
+			1,
+			'https://almaz--openoptions-ml-job-status.modal.run',
+			expect.objectContaining({ method: 'POST' })
+		);
+		expect(fetchSpy).toHaveBeenNthCalledWith(
+			2,
+			'https://almaz--openoptions-ml-job-cancel.modal.run',
+			expect.objectContaining({ method: 'POST' })
+		);
+		expect(fetchSpy).toHaveBeenNthCalledWith(
+			3,
+			'https://almaz--openoptions-ml-spawn-training.modal.run',
+			expect.objectContaining({ method: 'POST' })
 		);
 		fetchSpy.mockRestore();
 	});

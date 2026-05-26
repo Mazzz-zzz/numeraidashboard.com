@@ -70,6 +70,22 @@ a pod from a configured custom template, `pollTrainingStatus` reads pod state an
 logs, and `cancelTraining` deletes the pod. Real Modal/SageMaker calls should be
 added inside these handlers.
 
+## Modal Worker Deployment
+
+Modal launch, status, and cancel are coupled to the web endpoints in
+`ml/sagemaker/modal_runner.py`. Whenever those endpoint names, request payloads,
+or response contracts change, deploy the worker before shipping the dashboard:
+
+```sh
+cd ml
+modal deploy sagemaker/modal_runner.py
+```
+
+The dashboard launch path preflights the expected `job-status` and `job-cancel`
+endpoints before spawning a training call. A 404 from those checks means the
+Modal app is stale; redeploy `ml/sagemaker/modal_runner.py` instead of retrying
+the dashboard launch.
+
 `RoundDataset` is a global authenticated cache for Numerai round metadata and live
 dataset references. `ModelSubmission` remains owner-scoped so each user sees only
 their planned, queued, submitted, and completed submission history.
