@@ -6,6 +6,7 @@
 	import { listComputeJobs, listComputeProviders, type ComputeJob, type ComputeProvider } from '$lib/services/compute-service';
 	import { launchModelDraft, launchTrainingToast, refreshModelTraining } from '$lib/services/model-launch-service';
 	import { gpuOptionsForProvider, selectedGpuForProvider } from '$lib/services/provider-gpu-catalog';
+	import { trainingProgressForJob } from '$lib/services/training-progress';
 	import {
 		listRegistryModels,
 		modelStageLabels,
@@ -21,6 +22,10 @@
 	let jobs = $state<ComputeJob[]>([]);
 	let selectedProviderId = $state('');
 	let selectedGpuType = $state('');
+	let autoRefreshing = $state(false);
+	let now = $state(new Date());
+
+	const AUTO_REFRESH_MS = 30_000;
 
 	const providerOptions = $derived(providers.filter((provider) => provider.status !== 'disabled'));
 	const selectedProvider = $derived(providerOptions.find((provider) => provider.id === selectedProviderId));
@@ -31,6 +36,12 @@
 
 	onMount(() => {
 		if ($authState.user) void load();
+		const interval = window.setInterval(() => {
+			now = new Date();
+			if ($authState.user) void refreshTrainingModels();
+		}, AUTO_REFRESH_MS);
+
+		return () => window.clearInterval(interval);
 	});
 
 	$effect(() => {
@@ -100,9 +111,7 @@
 		}
 		busy = true;
 		try {
-			const result = await refreshModelTraining({ model, job, provider });
-			upsertModel(result.model);
-			upsertJob(result.job);
+			const result = await refreshTrainingModel(model, job, provider);
 			addToast(`${result.model.name} is ${modelStageLabels[result.model.stage as ModelStage].toLowerCase()}.`, 'success');
 		} catch (error) {
 			console.error(error);
@@ -111,6 +120,45 @@
 		} finally {
 			busy = false;
 		}
+	}
+
+	async function refreshTrainingModels() {
+		if (loading || autoRefreshing) return;
+		const candidates = models
+			.filter((model) => model.stage === 'training')
+			.map((model) => {
+				const job = jobForModel(model);
+				const provider = providers.find((item) => item.id === job?.providerId);
+				return job && provider ? { model, job, provider } : null;
+			})
+			.filter((item): item is { model: ModelRegistryItem; job: ComputeJob; provider: ComputeProvider } => item !== null);
+		if (!candidates.length) return;
+
+		autoRefreshing = true;
+		try {
+			await Promise.allSettled(
+				candidates.map(async ({ model, job, provider }) => {
+					const previousStage = model.stage;
+					const result = await refreshTrainingModel(model, job, provider);
+					if (previousStage === 'training' && result.model.stage !== 'training') {
+						addToast(
+							`${result.model.name} is ${modelStageLabels[result.model.stage as ModelStage].toLowerCase()}.`,
+							result.model.stage === 'success' ? 'success' : 'error'
+						);
+					}
+				})
+			);
+		} finally {
+			autoRefreshing = false;
+		}
+	}
+
+	async function refreshTrainingModel(model: ModelRegistryItem, job: ComputeJob, provider: ComputeProvider) {
+		const result = await refreshModelTraining({ model, job, provider });
+		upsertModel(result.model);
+		upsertJob(result.job);
+		now = new Date();
+		return result;
 	}
 
 	async function markFailed(model: ModelRegistryItem) {
@@ -182,6 +230,9 @@
 			<div>
 				<p class="eyebrow">Launch</p>
 				<h1>Train model drafts.</h1>
+				<p class="live-status">
+					Live logs refresh every 30s{autoRefreshing ? ' · refreshing' : ''}
+				</p>
 			</div>
 			<div class="launch-controls">
 				<label>
@@ -226,6 +277,7 @@
 						{#each launchModels as model (model.id)}
 							{@const job = jobForModel(model)}
 							{@const detail = jobDetail(model)}
+							{@const progress = trainingProgressForJob(job, now)}
 							<tr>
 								<td>
 									<strong>{model.name}</strong>
@@ -234,8 +286,26 @@
 								<td><span class="stage-chip" data-stage={model.stage}>{stageName(model.stage)}</span></td>
 								<td>{providerName(model)}</td>
 								<td class="job-status mono">
-									<span>{job?.status ?? 'not started'}</span>
-									{#if detail}
+									<div class="job-line">
+										<span>{job?.status ?? 'not started'}</span>
+										<strong>{progress.percent}%</strong>
+									</div>
+									<div class="progress-track" aria-label={`Training progress for ${model.name}`}>
+										<span style={`width: ${progress.percent}%`}></span>
+									</div>
+									<small>{progress.label} · {progress.etaLabel}</small>
+									{#if progress.logLines.length}
+										<ol class="live-log" aria-label={`Live training logs for ${model.name}`}>
+											{#each progress.logLines as line}
+												<li>
+													{#if line.level || line.timestamp}
+														<span class="log-meta">{line.level ?? 'LOG'}{line.timestamp ? ` ${line.timestamp}` : ''}</span>
+													{/if}
+													<span>{line.message}</span>
+												</li>
+											{/each}
+										</ol>
+									{:else if detail}
 										<small>{detail}</small>
 									{/if}
 								</td>
@@ -293,6 +363,14 @@
 		font-size: clamp(2.4rem, 5vw, 4.4rem);
 		line-height: 0.95;
 		letter-spacing: 0;
+	}
+
+	.live-status {
+		margin-top: 0.55rem;
+		color: var(--text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.72rem;
+		font-weight: 700;
 	}
 
 	.launch-controls {
@@ -400,7 +478,8 @@
 	}
 
 	.job-status {
-		max-width: 280px;
+		min-width: 320px;
+		max-width: 420px;
 	}
 
 	.job-status small {
@@ -411,6 +490,69 @@
 		font-size: 0.72rem;
 		line-height: 1.25;
 		white-space: normal;
+	}
+
+	.job-line {
+		display: flex;
+		align-items: center;
+		justify-content: space-between;
+		gap: 0.75rem;
+	}
+
+	.job-line strong {
+		font-size: 0.78rem;
+	}
+
+	.progress-track {
+		width: 100%;
+		height: 0.5rem;
+		overflow: hidden;
+		border: 1px solid var(--border);
+		border-radius: 999px;
+		background: var(--bg-input);
+		margin-top: 0.4rem;
+	}
+
+	.progress-track span {
+		display: block;
+		height: 100%;
+		border-radius: inherit;
+		background: var(--green);
+		transition: width 260ms ease;
+	}
+
+	.live-log {
+		display: grid;
+		gap: 0.2rem;
+		margin: 0.45rem 0 0;
+		padding: 0.5rem;
+		max-height: 8.8rem;
+		overflow: auto;
+		border: 1px solid var(--border-light);
+		border-radius: 6px;
+		background: var(--bg-page);
+		color: var(--text-secondary);
+		font-size: 0.68rem;
+		line-height: 1.35;
+		list-style: none;
+		white-space: normal;
+	}
+
+	.live-log li {
+		display: grid;
+		gap: 0.1rem;
+	}
+
+	.live-log span {
+		display: block;
+		overflow-wrap: anywhere;
+	}
+
+	.live-log .log-meta {
+		color: var(--text-muted);
+		font-size: 0.62rem;
+		font-weight: 800;
+		text-transform: uppercase;
 	}
 
 	.actions {
