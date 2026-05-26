@@ -5,6 +5,7 @@
 	import { addToast } from '$lib/stores';
 	import { listComputeJobs, listComputeProviders, type ComputeJob, type ComputeProvider } from '$lib/services/compute-service';
 	import { launchModelDraft, launchTrainingToast, refreshModelTraining } from '$lib/services/model-launch-service';
+	import { gpuOptionsForProvider, selectedGpuForProvider } from '$lib/services/provider-gpu-catalog';
 	import {
 		listRegistryModels,
 		modelStageLabels,
@@ -19,16 +20,11 @@
 	let providers = $state<ComputeProvider[]>([]);
 	let jobs = $state<ComputeJob[]>([]);
 	let selectedProviderId = $state('');
-	let selectedGpuType = $state('L40S_48GB');
-
-	const gpuOptions = [
-		{ value: 'L40S_48GB', label: 'L40S 48GB' },
-		{ value: 'A100_40GB', label: 'A100 40GB' },
-		{ value: 'A100_80GB', label: 'A100 80GB' }
-	];
+	let selectedGpuType = $state('');
 
 	const providerOptions = $derived(providers.filter((provider) => provider.status !== 'disabled'));
 	const selectedProvider = $derived(providerOptions.find((provider) => provider.id === selectedProviderId));
+	const gpuOptions = $derived(gpuOptionsForProvider(selectedProvider));
 	const launchModels = $derived(
 		models.filter((model) => model.stage === 'draft' || model.stage === 'training' || model.stage === 'failed' || model.stage === 'success')
 	);
@@ -39,6 +35,11 @@
 
 	$effect(() => {
 		if ($authState.user && loading) void load();
+	});
+
+	$effect(() => {
+		const selected = selectedGpuForProvider(selectedProvider, selectedGpuType);
+		if ((selected?.value ?? '') !== selectedGpuType) selectedGpuType = selected?.value ?? '';
 	});
 
 	async function load() {
@@ -72,7 +73,7 @@
 				model,
 				provider: selectedProvider,
 				maxSpendUsd: null,
-				gpuType: selectedProvider.providerType === 'prime_intellect' ? selectedGpuType : null
+				gpuType: selectedGpuType || null
 			});
 			upsertModel(result.model);
 			upsertJob(result.job);
@@ -193,7 +194,7 @@
 				</label>
 				<label>
 					<span>GPU</span>
-					<select bind:value={selectedGpuType} disabled={selectedProvider?.providerType !== 'prime_intellect'}>
+					<select bind:value={selectedGpuType} disabled={!gpuOptions.length}>
 						{#each gpuOptions as gpu (gpu.value)}
 							<option value={gpu.value}>{gpu.label}</option>
 						{/each}

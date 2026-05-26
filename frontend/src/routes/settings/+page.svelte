@@ -4,6 +4,11 @@
 	import { authState, getPasskeys, registerPasskey, deletePasskey } from '$lib/auth';
 	import { dataClient } from '$lib/data';
 	import { addToast } from '$lib/stores';
+	import {
+		editableCredentialValue,
+		preservedCredentialRef,
+		settingsCredentialInputType
+	} from '$lib/services/settings-credentials';
 	import type { Schema } from '../../../amplify/data/resource';
 
 	import { SvelteFlow, Background, Controls, type Node, type Edge } from '@xyflow/svelte';
@@ -400,10 +405,10 @@
 		return {
 			name: providerForm.name.trim(),
 			providerType: providerForm.providerType,
-			apiKey: providerForm.apiKey.trim() || null,
-			apiSecret: providerForm.apiSecret.trim() || null,
-			apiKeyRef: currentProvider?.apiKeyRef ?? verifiedProviderRefs?.apiKeyRef ?? null,
-			apiSecretRef: currentProvider?.apiSecretRef ?? verifiedProviderRefs?.apiSecretRef ?? null,
+			apiKey: editableCredentialValue(providerForm.apiKey),
+			apiSecret: editableCredentialValue(providerForm.apiSecret),
+			apiKeyRef: preservedCredentialRef(currentProvider?.apiKeyRef, verifiedProviderRefs?.apiKeyRef),
+			apiSecretRef: preservedCredentialRef(currentProvider?.apiSecretRef, verifiedProviderRefs?.apiSecretRef),
 			workspaceId: providerForm.workspaceId.trim() || null,
 			awsRoleArn: providerForm.awsRoleArn.trim() || null,
 			awsRegion: providerForm.awsRegion.trim() || null,
@@ -451,7 +456,7 @@
 			const publicId = numeraiForm.publicId.trim();
 			const { data, errors } = await dataClient().mutations.verifyNumeraiAccount({
 				publicId,
-				secretKey: numeraiForm.secretKey.trim() || null,
+				secretKey: editableCredentialValue(numeraiForm.secretKey),
 				secretRef: numeraiAccount?.secretRef ?? null
 			});
 			if (errors?.length) throw new Error(errors[0].message);
@@ -808,7 +813,7 @@
 								</label>
 								<label>
 									<span>Secret key {numeraiAccount ? '(leave blank to keep current)' : ''}</span>
-									<input type="password" bind:value={numeraiForm.secretKey} autocomplete="off" />
+									<input type={settingsCredentialInputType('numeraiApiSecret')} bind:value={numeraiForm.secretKey} autocomplete="off" />
 								</label>
 								<div class="form-actions">
 									<button type="submit" class="primary" disabled={busy}>
@@ -888,7 +893,7 @@
 								{#if providerForm.providerType === 'prime_intellect'}
 									<label>
 										<span>API key {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : ''}</span>
-										<input type="password" bind:value={providerForm.apiKey} autocomplete="off" placeholder="pi_…" />
+										<input type={settingsCredentialInputType('primeIntellectApiKey')} bind:value={providerForm.apiKey} autocomplete="off" placeholder="pi_…" />
 									</label>
 									<label>
 										<span>Workspace ID (optional)</span>
@@ -901,11 +906,11 @@
 								{:else if providerForm.providerType === 'modal'}
 									<label>
 										<span>Token ID {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : ''}</span>
-										<input type="text" bind:value={providerForm.apiKey} autocomplete="off" placeholder="ak-…" />
+										<input type={settingsCredentialInputType('modalTokenId')} bind:value={providerForm.apiKey} autocomplete="off" placeholder="ak-…" />
 									</label>
 									<label>
 										<span>Token secret {currentProvider?.apiSecretRef ? '(leave blank to keep current)' : ''}</span>
-										<input type="password" bind:value={providerForm.apiSecret} autocomplete="off" placeholder="as-…" />
+										<input type={settingsCredentialInputType('modalTokenSecret')} bind:value={providerForm.apiSecret} autocomplete="off" placeholder="as-…" />
 									</label>
 								{:else if providerForm.providerType === 'sagemaker'}
 									<label>
@@ -919,7 +924,7 @@
 								{:else if providerForm.providerType === 'custom'}
 									<label>
 										<span>API key {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : '(optional)'}</span>
-										<input type="password" bind:value={providerForm.apiKey} autocomplete="off" />
+										<input type={settingsCredentialInputType('customApiKey')} bind:value={providerForm.apiKey} autocomplete="off" />
 									</label>
 									<label>
 										<span>Base URL</span>

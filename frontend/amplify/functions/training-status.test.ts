@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { cancelTrainingJob, pollTrainingJob, statusFromProviderJobId } from './training-status';
 
 const checkedAt = '2026-05-23T15:45:00.000Z';
@@ -44,6 +44,63 @@ describe('training function status transitions', () => {
 		expect(result.status).toBe('completed');
 		expect(result.providerJobId).toBe('sagemaker-completed-123');
 		expect(result.metricsJson).toEqual({ providerStatus: 'completed', checkedAt });
+	});
+
+	it('keeps Modal jobs queued when status polling gets a 404 empty response', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(new Response('', { status: 404 }));
+
+		const result = await pollTrainingJob({
+			runId: 'run-1',
+			providerType: 'modal',
+			providerJobId: 'modal-job-123',
+			apiKey: 'ak-test',
+			apiSecret: 'as-test',
+			providerConfigJson: { modal: { statusUrl: 'https://modal.example/status/{jobId}' } },
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			status: 'queued',
+			providerJobId: 'modal-job-123',
+			error: null,
+		});
+		expect(result.logTail).toContain('404 empty response');
+		expect(fetchSpy).toHaveBeenCalledWith('https://modal.example/status/modal-job-123', expect.any(Object));
+		fetchSpy.mockRestore();
+	});
+
+	it('polls Modal status endpoints into completed pipeline state', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(
+			new Response(
+				JSON.stringify({
+					status: 'succeeded',
+					logTail: 'NUMERAI_DASHBOARD_TRAINING_COMPLETED',
+					artifactUri: 's3://models/run-1.pkl',
+					metricsJson: { validationCorr: 0.02 },
+				}),
+				{ status: 200 }
+			)
+		);
+
+		const result = await pollTrainingJob({
+			runId: 'run-1',
+			providerType: 'modal',
+			providerJobId: 'modal-job-123',
+			apiKey: 'ak-test',
+			apiSecret: 'as-test',
+			providerConfigJson: { modal: { statusUrl: 'https://modal.example/status/{jobId}' } },
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			status: 'completed',
+			providerJobId: 'modal-job-123',
+			artifactUri: 's3://models/run-1.pkl',
+			metricsJson: { validationCorr: 0.02 },
+		});
+		fetchSpy.mockRestore();
 	});
 
 	it('cancels queued and provider-backed jobs consistently', async () => {

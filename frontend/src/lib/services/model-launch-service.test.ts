@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { launchTrainingToast } from './model-launch-service';
+import { launchTrainingToast, providerConfigForLaunch } from './model-launch-service';
 
 describe('model launch service', () => {
 	it('uses an error toast for failed launch actions', () => {
@@ -30,5 +30,42 @@ describe('model launch service', () => {
 			message: 'Baseline learning_rate=0.012 is training.',
 			type: 'success'
 		});
+	});
+
+	it('builds Prime Intellect providerConfigJson as an object with the selected GPU', () => {
+		const config = providerConfigForLaunch(
+			{
+				providerType: 'prime_intellect',
+				credentialsJson: JSON.stringify({ primeIntellect: { dryRun: true } })
+			} as never,
+			'L40S_48GB'
+		);
+
+		expect(config).toEqual({ primeIntellect: { dryRun: true, gpuType: 'L40S_48GB' } });
+		expect(typeof config).toBe('object');
+	});
+
+	it('builds Modal providerConfigJson with the provider GPU identifier', () => {
+		const config = providerConfigForLaunch(
+			{
+				providerType: 'modal',
+				credentialsJson: { modal: { launchUrl: 'https://modal.example/launch' } }
+			} as never,
+			'L40S'
+		);
+
+		expect(config).toEqual({ modal: { launchUrl: 'https://modal.example/launch', gpuType: 'L40S' } });
+	});
+
+	it('rejects invalid provider GPU choices before launch submission', () => {
+		expect(() =>
+			providerConfigForLaunch(
+				{
+					providerType: 'modal',
+					credentialsJson: { modal: { gpuCatalog: ['L40S'] } }
+				} as never,
+				'A100'
+			)
+		).toThrow('modal does not support GPU "A100"');
 	});
 });

@@ -16,7 +16,9 @@ export type TrainingStatusInput = {
 	readonly providerType: string | null | undefined;
 	readonly providerJobId?: string | null | undefined;
 	readonly apiKey?: string | null;
+	readonly apiSecret?: string | null;
 	readonly apiKeyRef?: string | null;
+	readonly apiSecretRef?: string | null;
 	readonly baseUrl?: string | null;
 	readonly workspaceId?: string | null;
 	readonly providerConfigJson?: unknown;
@@ -40,7 +42,9 @@ type RequiredStatusInput = {
 	readonly providerType: string;
 	readonly providerJobId: string | null;
 	readonly apiKey?: string | null;
+	readonly apiSecret?: string | null;
 	readonly apiKeyRef?: string | null;
+	readonly apiSecretRef?: string | null;
 	readonly baseUrl?: string | null;
 	readonly workspaceId?: string | null;
 	readonly providerConfigJson?: unknown;
@@ -114,7 +118,9 @@ function parseStatusInput(input: TrainingStatusInput): ParseStatusInputResult {
 			providerType,
 			providerJobId: input.providerJobId?.trim() || null,
 			apiKey: input.apiKey,
+			apiSecret: input.apiSecret,
 			apiKeyRef: input.apiKeyRef,
+			apiSecretRef: input.apiSecretRef,
 			baseUrl: input.baseUrl,
 			workspaceId: input.workspaceId,
 			providerConfigJson: input.providerConfigJson,

@@ -35,6 +35,7 @@ export function providerTypeArgument(provider: ComputeProvider): string {
 function providerRuntimeArgs(provider: ComputeProvider, providerConfigJson?: unknown) {
 	return {
 		apiKeyRef: provider.apiKeyRef ?? null,
+		apiSecretRef: provider.apiSecretRef ?? null,
 		baseUrl: provider.baseUrl ?? null,
 		workspaceId: provider.workspaceId ?? null,
 		providerConfigJson: providerConfigJson ?? provider.credentialsJson ?? null,

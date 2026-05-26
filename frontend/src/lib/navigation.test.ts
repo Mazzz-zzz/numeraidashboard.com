@@ -20,6 +20,7 @@ describe('navigation', () => {
 			'Builder',
 			'Models',
 			'Launch',
+			'Submissions',
 			'Docs',
 			'Settings'
 		]);
