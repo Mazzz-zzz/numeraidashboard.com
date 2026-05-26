@@ -511,17 +511,75 @@ def spawn_inference(body: dict):
     return {"status": "spawned", "call_id": call.object_id}
 
 
-@app.function(image=ml_image)
+def _read_job_json(s3, bucket: str, key: str):
+    import json
+
+    try:
+        obj = s3.get_object(Bucket=bucket, Key=key)
+        return json.loads(obj["Body"].read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def _job_status_snapshot(job_name: str | None, s3_bucket: str) -> dict:
+    if not job_name:
+        return {}
+
+    import boto3
+
+    s3 = boto3.client("s3")
+    progress = _read_job_json(s3, s3_bucket, f"jobs/{job_name}/progress.json")
+    metrics = _read_job_json(s3, s3_bucket, f"jobs/{job_name}/metrics.json")
+    failure = _read_job_json(s3, s3_bucket, f"jobs/{job_name}/failure.json")
+
+    logs = []
+    if progress:
+        step = progress.get("step", "running")
+        pct = progress.get("progress_pct")
+        suffix = f" {pct}%" if pct is not None else ""
+        logs.append({"level": "INFO", "log": f"progress: {step}{suffix}", "progress": progress})
+    if metrics:
+        elapsed = metrics.get("elapsed_seconds")
+        suffix = f" in {elapsed}s" if elapsed is not None else ""
+        logs.append({"level": "INFO", "log": f"training metrics written{suffix}", "metrics": metrics})
+    if failure:
+        error = failure.get("error", "training failed")
+        logs.append({"level": "ERROR", "log": f"training failed: {error}", "failure": failure})
+
+    snapshot = {}
+    if logs:
+        snapshot["logs"] = logs
+        snapshot["logTail"] = "\n".join(str(item["log"]) for item in logs)
+    payload = {
+        key: value
+        for key, value in {
+            "progress": progress,
+            "metrics": metrics,
+            "failure": failure,
+        }.items()
+        if value is not None
+    }
+    if payload:
+        snapshot["metricsJson"] = payload
+    if failure:
+        snapshot["error"] = failure.get("error", "training failed")
+    return snapshot
+
+
+@app.function(image=ml_image, secrets=[aws_secret])
 @modal.fastapi_endpoint(method="POST")
 def job_status(body: dict):
     """HTTP endpoint that returns the status of a Modal call by id.
 
-    POST body: {"call_id": "..."}
+    POST body: {"call_id": "...", "job_name": "...", "s3_bucket": "..."}
     Returns: {"status": "running|completed|failed", ...}
     """
     call_id = body.get("call_id")
     if not call_id:
         return {"status": "error", "detail": "call_id is required"}
+    job_name = body.get("job_name")
+    s3_bucket = body.get("s3_bucket", "openoptions-ml")
+    snapshot = _job_status_snapshot(job_name, s3_bucket)
 
     try:
         call = modal.FunctionCall.from_id(call_id)
@@ -531,15 +589,17 @@ def job_status(body: dict):
     try:
         result = call.get(timeout=0)
     except modal.exception.OutputExpiredError:
-        return {"status": "failed", "error": "Modal output expired"}
+        return {"status": "failed", "error": "Modal output expired", **snapshot}
     except TimeoutError:
-        return {"status": "running"}
+        if snapshot.get("error"):
+            return {"status": "failed", **snapshot}
+        return {"status": "running", **snapshot}
     except Exception as e:
         if _is_modal_cancelled_exception(e):
-            return {"status": "cancelled", "error": str(e)}
-        return {"status": "failed", "error": str(e)}
+            return {"status": "cancelled", "error": str(e), **snapshot}
+        return {"status": "failed", "error": str(e), **snapshot}
 
-    return {"status": "completed", "result": result}
+    return {"status": "completed", "result": result, **snapshot}
 
 
 @app.function(image=ml_image)

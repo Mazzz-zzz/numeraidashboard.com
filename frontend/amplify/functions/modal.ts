@@ -275,7 +275,11 @@ export async function pollModalJob(
 				: {
 						method: 'POST',
 						headers: modalHeaders(credentials, { 'Content-Type': 'application/json' }),
-						body: JSON.stringify({ call_id: input.providerJobId }),
+						body: JSON.stringify({
+							call_id: input.providerJobId,
+							job_name: input.runId ? trainingJobName(input.runId) : undefined,
+							s3_bucket: settings.s3Bucket,
+						}),
 					}
 		);
 		const text = await resp.text();
@@ -301,7 +305,7 @@ export async function pollModalJob(
 			status: error && status !== 'cancelled' ? 'failed' : status,
 			providerJobId: input.providerJobId,
 			checkedAt: input.checkedAt,
-			logTail: stringFrom(body?.logTail) ?? stringFrom(body?.logs) ?? `Modal call ${input.providerJobId} status=${remoteStatus}.`,
+			logTail: logTailFromStatusBody(body) ?? `Modal call ${input.providerJobId} status=${remoteStatus}.`,
 			error,
 			costUsd: numberFrom(body?.costUsd),
 			metricsJson: metrics,
@@ -490,6 +494,21 @@ function mapModalStatus(status: string): 'queued' | 'running' | 'completed' | 'f
 function parseArtifactUri(result: Record<string, unknown> | null): string | null {
 	if (!result) return null;
 	return stringFrom(result.artifact_uri) ?? stringFrom(result.artifactUri);
+}
+
+function logTailFromStatusBody(body: ModalStatusResponse | null): string | null {
+	const direct = stringFrom(body?.logTail) ?? stringFrom(body?.logs);
+	if (direct) return direct;
+	const logs = Array.isArray(body?.logs) ? body.logs : null;
+	if (!logs) return null;
+	const lines = logs
+		.map((item) => {
+			if (typeof item === 'string') return item;
+			const row = asRecord(item);
+			return stringFrom(row?.log) ?? stringFrom(row?.message) ?? stringFrom(row?.text);
+		})
+		.filter((item): item is string => item !== null);
+	return lines.length ? lines.join('\n') : null;
 }
 
 function parseJsonBody(value: string): unknown {
