@@ -3,6 +3,7 @@ import type { Schema } from '../../../amplify/data/resource';
 import { listNumeraiAccounts, type NumeraiAccount } from './account-service';
 import { listComputeProviders, type ComputeProvider } from './compute-service';
 import { listRegistryModels, type ModelRegistryItem } from './registry-service';
+import { serializeAwsJsonArg } from './training-service';
 
 type Client = ReturnType<typeof dataClient>;
 
@@ -266,7 +267,7 @@ export async function submitModel(input: SubmitModelDraft, client: Client = data
 		validationMode: input.validationMode,
 		uploadEnabled: input.uploadEnabled,
 		baseUrl: context?.baseUrl ?? null,
-		providerConfigJson: context?.providerConfigJson ?? null
+		providerConfigJson: serializeAwsJsonArg(context?.providerConfigJson ?? null)
 	});
 	if (errors?.length) throw new Error(errors[0].message);
 	if (!data) throw new Error('submitModel returned no data');

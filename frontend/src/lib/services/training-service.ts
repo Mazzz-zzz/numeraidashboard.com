@@ -17,6 +17,14 @@ export type TrainingActionInput = {
 	readonly providerConfigJson?: unknown;
 };
 
+export function serializeAwsJsonArg(value: unknown): string | null {
+	if (value === null || value === undefined) return null;
+	if (typeof value === 'string') return value;
+	const encoded = JSON.stringify(value);
+	if (encoded === undefined) return null;
+	return encoded;
+}
+
 export type TrainingRunActionPatch = {
 	readonly id: string;
 	readonly status: TrainingRunStatus;
@@ -38,7 +46,7 @@ function providerRuntimeArgs(provider: ComputeProvider, providerConfigJson?: unk
 		apiSecretRef: provider.apiSecretRef ?? null,
 		baseUrl: provider.baseUrl ?? null,
 		workspaceId: provider.workspaceId ?? null,
-		providerConfigJson: providerConfigJson ?? provider.credentialsJson ?? null,
+		providerConfigJson: serializeAwsJsonArg(providerConfigJson ?? provider.credentialsJson ?? null),
 	};
 }
 

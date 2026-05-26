@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	normalizeTrainingActionStatus,
 	providerTypeArgument,
+	serializeAwsJsonArg,
 	terminalActionTimestamp,
 	toComputeJobStatus,
 	trainingActionSummary,
@@ -13,6 +14,24 @@ describe('training service', () => {
 	it('passes provider type through for function arguments', () => {
 		expect(providerTypeArgument({ providerType: 'sagemaker' } as ComputeProvider)).toBe('sagemaker');
 		expect(providerTypeArgument({ providerType: null } as ComputeProvider)).toBe('custom');
+	});
+
+	it('serializes AWSJSON mutation args for AppSync', () => {
+		expect(serializeAwsJsonArg({ modal: { gpuType: 't4', targetCols: ['target_ender_20'] } })).toBe(
+			'{"modal":{"gpuType":"t4","targetCols":["target_ender_20"]}}'
+		);
+		expect(serializeAwsJsonArg(['t4', 'a10g'])).toBe('["t4","a10g"]');
+	});
+
+	it('does not double-encode existing AWSJSON strings', () => {
+		const encoded = '{"modal":{"gpuType":"t4"}}';
+		expect(serializeAwsJsonArg(encoded)).toBe(encoded);
+	});
+
+	it('keeps empty AWSJSON mutation args null', () => {
+		expect(serializeAwsJsonArg(null)).toBeNull();
+		expect(serializeAwsJsonArg(undefined)).toBeNull();
+		expect(serializeAwsJsonArg(() => 'not-json')).toBeNull();
 	});
 
 	it('summarizes successful and failed function results', () => {
