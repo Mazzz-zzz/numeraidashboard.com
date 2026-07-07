@@ -36,6 +36,7 @@ except ImportError:
     HAS_TABICL = False
 
 from models.base import NumeraiModel
+from config.device import resolve_device_str, empty_cache
 
 
 class TabICLModel(NumeraiModel):
@@ -252,7 +253,7 @@ class TabICLModel(NumeraiModel):
         if not self._bags:
             raise RuntimeError("Model not trained or loaded")
 
-        device = "cuda" if self._cuda_available() else "cpu"
+        device = resolve_device_str()
         pred_chunk_size = self._get_pred_chunk_size()
         all_preds = np.zeros(len(df), dtype=np.float64)
 
@@ -336,21 +337,8 @@ class TabICLModel(NumeraiModel):
             })
 
     @staticmethod
-    def _cuda_available() -> bool:
-        try:
-            import torch
-            return torch.cuda.is_available()
-        except ImportError:
-            return False
-
-    @staticmethod
     def _clear_gpu_cache() -> None:
-        try:
-            import torch
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-        except ImportError:
-            pass
+        empty_cache()
 
     @property
     def model_type(self) -> str:

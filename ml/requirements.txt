@@ -11,3 +11,16 @@ pyyaml>=6.0
 pydantic>=2.0.0
 pydantic-settings>=2.0.0
 pytest>=7.0.0
+
+# --- Optional: neural / foundation models -----------------------------------
+# Only needed for the torch-based models (MLP, TabM, FT-Transformer,
+# ModernNCA) and the tabular foundation models (TabPFN, TabICL). The core
+# LightGBM/CatBoost path above works without these.
+#
+# On Apple Silicon these automatically use the Metal (MPS) GPU — no config
+# needed; see config/device.py. torch 2.4+ is recommended on macOS for the
+# best MPS op coverage. Force a device with NUMERAI_TORCH_DEVICE=cpu|mps|cuda.
+#
+# torch>=2.1.0        # 2.4+ recommended on Apple Silicon (MPS)
+# tabpfn>=2.0.0       # tabular foundation model; supports MPS
+# tabicl>=0.1.0       # in-context tabular model; supports MPS
