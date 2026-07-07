@@ -30,6 +30,7 @@ except ImportError:
     HAS_TORCH = False
 
 from models.base import NumeraiModel
+from config.device import resolve_device
 
 
 # ---------------------------------------------------------------------------
@@ -145,7 +146,7 @@ class MLPModel(NumeraiModel):
         self._model: Optional[_MLPNetwork] = None
         self._feature_names: List[str] = []
         self._target_names: List[str] = []
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = resolve_device()
 
     # ------------------------------------------------------------------
     # Multi-head training: all targets in one model

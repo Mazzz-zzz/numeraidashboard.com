@@ -33,6 +33,7 @@ except ImportError:
     HAS_TORCH = False
 
 from models.base import NumeraiModel
+from config.device import resolve_device
 
 
 # ---------------------------------------------------------------------------
@@ -190,7 +191,7 @@ class ModernNCAModel(NumeraiModel):
 
         self._model: Optional[_ModernNCANetwork] = None
         self._feature_names: List[str] = []
-        self._device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self._device = resolve_device()
 
         # Reference store for prediction-time KNN
         self._reference_embeddings: Optional[torch.Tensor] = None  # (N_ref, D)

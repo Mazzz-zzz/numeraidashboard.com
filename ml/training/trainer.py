@@ -32,6 +32,7 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config.settings import get_ml_settings
+from config.device import empty_cache
 from data.download import (
     download_current_round,
     get_current_round,
@@ -434,12 +435,7 @@ def run_training(
             if _is_icl:
                 del model
                 gc.collect()
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except ImportError:
-                    pass
+                empty_cache()
                 models[target] = model_path  # path sentinel for lazy reload
                 print(f"    [ICL] Evicted model from memory (saved to {model_path})")
             else:
@@ -669,12 +665,7 @@ def run_training(
             if isinstance(model_or_path, Path):
                 del model
                 gc.collect()
-                try:
-                    import torch
-                    if torch.cuda.is_available():
-                        torch.cuda.empty_cache()
-                except ImportError:
-                    pass
+                empty_cache()
 
         live_ensemble = _ensemble_predictions(live_predictions)
 

@@ -35,6 +35,7 @@ except ImportError:
     HAS_TABPFN = False
 
 from models.base import NumeraiModel
+from config.device import resolve_device_str
 
 
 class TabPFNModel(NumeraiModel):
@@ -67,15 +68,9 @@ class TabPFNModel(NumeraiModel):
         self.n_recent_eras = int(n_recent_eras)
         self.n_estimators_per_bag = int(n_estimators_per_bag)
 
-        # Resolve device
-        if device == "auto":
-            try:
-                import torch
-                self._device = "cuda" if torch.cuda.is_available() else "cpu"
-            except ImportError:
-                self._device = "cpu"
-        else:
-            self._device = device
+        # Resolve device: honour an explicit choice, else auto-pick
+        # cuda -> mps (Apple Silicon) -> cpu. TabPFN itself supports MPS.
+        self._device = resolve_device_str(None if device == "auto" else device)
 
         # Bag storage — populated by fit(), persisted by save()
         self._bags: List[Dict] = []  # each: {X, y, feature_names, seed}
