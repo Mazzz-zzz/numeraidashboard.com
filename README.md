@@ -30,17 +30,21 @@ into one workspace while keeping the executable ML workload available as regular
 
 ## Screenshots
 
-### Model operations overview
+### Build model candidates
 
-[![Numerai Dashboard model operations overview](docs/screenshots/overview-desktop.png)](https://numeraidashboard.com)
+[![Numerai Dashboard model builder](docs/screenshots/builder-desktop.png)](https://numeraidashboard.com/builder)
 
-### Compute routing
+### Operate the model registry
 
-[![Numerai Dashboard compute-provider routing workflow](docs/screenshots/compute-routing-desktop.png)](https://numeraidashboard.com)
+[![Numerai Dashboard model registry](docs/screenshots/models-desktop.png)](https://numeraidashboard.com/models)
 
-### Workflow documentation
+### Monitor training runs
 
-[![Numerai Dashboard model lifecycle documentation](docs/screenshots/workflow-docs-desktop.png)](https://numeraidashboard.com/docs)
+[![Numerai Dashboard training control](docs/screenshots/launch-desktop.png)](https://numeraidashboard.com/launch)
+
+### Connect the workspace
+
+[![Numerai Dashboard provider workspace](docs/screenshots/settings-desktop.png)](https://numeraidashboard.com/settings)
 
 ## Capabilities
 
