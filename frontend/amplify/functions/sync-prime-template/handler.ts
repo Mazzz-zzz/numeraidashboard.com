@@ -1,12 +1,20 @@
 import type { Schema } from '../../data/resource';
 import { resolvePrimeApiKey } from '../prime-intellect';
+import { ownedSecretRef, requireCallerSub, trustedProviderUrl } from '../workflow-security';
 
 type Args = Schema['syncPrimeTemplate']['args'];
 
 export const handler: Schema['syncPrimeTemplate']['functionHandler'] = async (event) => {
 	const args = event.arguments;
 	const checkedAt = new Date().toISOString();
-	const apiKey = await resolvePrimeApiKey({ apiKeyRef: args.apiKeyRef, apiKey: args.apiKey });
+	const owner = requireCallerSub(event);
+	const apiKeyRef = ownedSecretRef(
+		args.apiKey?.trim() ? null : args.apiKeyRef,
+		owner,
+		'Prime Intellect API key reference'
+	);
+	const baseUrl = trustedProviderUrl(args.baseUrl, 'prime_intellect', 'Prime Intellect base URL');
+	const apiKey = await resolvePrimeApiKey({ apiKeyRef, apiKey: args.apiKey });
 	if (!apiKey) return fail('Prime Intellect API key is required', checkedAt);
 
 	const templateName = args.templateName.trim();
@@ -24,7 +32,7 @@ export const handler: Schema['syncPrimeTemplate']['functionHandler'] = async (ev
 	if (dockerImage && !dryRun) {
 		const err = await checkDockerImage({
 			apiKey,
-			baseUrl: args.baseUrl,
+			baseUrl,
 			image: dockerImage,
 			registryCredentialsId: args.registryCredentialsId ?? null,
 		});

@@ -14,6 +14,7 @@ const baseEvent = {
 		maxPrice: 1.25,
 		dryRun: true,
 	},
+	identity: { sub: 'user-1', claims: { sub: 'user-1' } },
 };
 
 describe('syncPrimeTemplate handler', () => {
@@ -55,5 +56,35 @@ describe('syncPrimeTemplate handler', () => {
 			expect.objectContaining({ method: 'POST' })
 		);
 		fetchSpy.mockRestore();
+	});
+
+	it('rejects an untrusted Prime endpoint before making a request', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch');
+
+		await expect(
+			handler({
+				...baseEvent,
+				arguments: {
+					...baseEvent.arguments,
+					baseUrl: 'https://attacker.example',
+					dryRun: false,
+				},
+			} as never)
+		).rejects.toThrow('https://api.primeintellect.ai');
+		expect(fetchSpy).not.toHaveBeenCalled();
+		fetchSpy.mockRestore();
+	});
+
+	it('rejects another user stored API key reference', async () => {
+		await expect(
+			handler({
+				...baseEvent,
+				arguments: {
+					...baseEvent.arguments,
+					apiKey: null,
+					apiKeyRef: '/numeraidashboard/user-2/provider/key/api-key',
+				},
+			} as never)
+		).rejects.toThrow("outside the authenticated user's secret scope");
 	});
 });
