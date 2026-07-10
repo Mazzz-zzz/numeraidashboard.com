@@ -27,6 +27,23 @@ npx tsc --noEmit --project tsconfig.json
 npm run build
 ```
 
+## Deployment configuration
+
+Deployment-specific values are not committed to the repository. Configure these
+once as app-level variables under Amplify Hosting > Environment variables:
+
+| Variable | Purpose |
+| --- | --- |
+| `MODAL_APP_HOST` | Modal web endpoint host prefix used by training, polling, cancellation, and submission functions. |
+| `ML_ARTIFACT_BUCKET` | S3 bucket used by the Modal worker for training and inference artifacts. |
+| `PASSKEY_RELYING_PARTY_ID` | WebAuthn relying-party domain, such as `numeraidashboard.com`. |
+| `VITE_GA_MEASUREMENT_ID` | Optional public Google Analytics measurement ID. Analytics stays disabled when omitted. |
+
+These values are non-secret. Numerai and provider credentials remain in
+caller-owned SSM SecureString parameters. Copy `frontend/.env.example` for local
+frontend configuration and export backend values in the shell before running an
+Amplify sandbox.
+
 ## Amplify backend (auth + data)
 
 From `frontend/`:

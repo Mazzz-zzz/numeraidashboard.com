@@ -49,8 +49,8 @@ type SecretResolver = (name: string) => Promise<string>;
 
 type ModalSettings = {
 	readonly dryRun: boolean;
-	readonly appHost: string;
-	readonly s3Bucket: string;
+	readonly appHost: string | null;
+	readonly s3Bucket: string | null;
 	readonly gpu: string;
 	readonly gpuCount: number;
 	readonly launchUrl: string | null;
@@ -90,8 +90,6 @@ type ModalStatusResponse = {
 
 const ssm = new SSMClient({});
 
-const DEFAULT_APP_HOST = 'almaz--openoptions-ml';
-const DEFAULT_S3_BUCKET = 'openoptions-ml';
 const MODAL_HEALTHCHECK_CALL_ID = 'numeraidashboard-healthcheck';
 
 export async function launchModalTraining(
@@ -102,21 +100,6 @@ export async function launchModalTraining(
 	const settings = modalSettings(input);
 
 	const jobName = trainingJobName(input.runId);
-	const payload = {
-		gpu: settings.gpu,
-		gpu_type: settings.gpu,
-		gpu_count: settings.gpuCount,
-		job_name: jobName,
-		hyperparams: { ...settings.hyperparams, run_id: input.runId, provider_id: input.providerId },
-		env_vars: {
-			RUN_ID: input.runId,
-			PROVIDER_ID: input.providerId,
-			NUMERAI_DASHBOARD_JOB: 'true',
-			...settings.envVars,
-		},
-		s3_bucket: settings.s3Bucket,
-	};
-
 	if (settings.dryRun) {
 		return {
 			ok: true,
@@ -131,18 +114,33 @@ export async function launchModalTraining(
 		};
 	}
 
-	const url = settings.launchUrl ?? modalEndpoint(settings.appHost, 'spawn-training', input.baseUrl);
 	try {
+		const s3Bucket = requireModalSetting(settings.s3Bucket, 'ML_ARTIFACT_BUCKET');
+		const payload = {
+			gpu: settings.gpu,
+			gpu_type: settings.gpu,
+			gpu_count: settings.gpuCount,
+			job_name: jobName,
+			hyperparams: { ...settings.hyperparams, run_id: input.runId, provider_id: input.providerId },
+			env_vars: {
+				RUN_ID: input.runId,
+				PROVIDER_ID: input.providerId,
+				NUMERAI_DASHBOARD_JOB: 'true',
+				...settings.envVars,
+			},
+			s3_bucket: s3Bucket,
+		};
+		const url = settings.launchUrl ?? modalEndpoint(settings.appHost, 'spawn-training', input.baseUrl);
 		const credentials = await resolveModalCredentials(input, deps.secretResolver);
 		const healthBaseUrl = modalHealthBaseUrl(settings.launchUrl, input.baseUrl);
 		if (healthBaseUrl !== null) {
 			const health = await verifyModalControlEndpoints({
 				fetchFn,
-				credentials,
-				appHost: settings.appHost,
-				baseUrl: healthBaseUrl,
-				checkedAt: input.checkedAt
-			});
+					credentials,
+					appHost: settings.appHost,
+					baseUrl: healthBaseUrl,
+					checkedAt: input.checkedAt,
+				});
 			if (!health.ok) return health;
 		}
 		const resp = await fetchFn(url, {
@@ -200,17 +198,17 @@ export async function launchModalInference(
 		};
 	}
 
-	const url = modalEndpoint(settings.appHost, 'spawn-inference', input.baseUrl);
-	const payload = {
-		job_name: input.jobName,
-		model_artifact_s3: input.modelArtifactUri,
-		numerai_public_id: input.numeraiPublicId,
-		numerai_secret_key: input.numeraiSecretKey,
-		numerai_model_id: input.numeraiModelId,
-		s3_bucket: settings.s3Bucket,
-	};
-
 	try {
+		const s3Bucket = requireModalSetting(settings.s3Bucket, 'ML_ARTIFACT_BUCKET');
+		const url = modalEndpoint(settings.appHost, 'spawn-inference', input.baseUrl);
+		const payload = {
+			job_name: input.jobName,
+			model_artifact_s3: input.modelArtifactUri,
+			numerai_public_id: input.numeraiPublicId,
+			numerai_secret_key: input.numeraiSecretKey,
+			numerai_model_id: input.numeraiModelId,
+			s3_bucket: s3Bucket,
+		};
 		const credentials = await resolveModalCredentials(input, deps.secretResolver);
 		const resp = await fetchFn(url, {
 			method: 'POST',
@@ -261,13 +259,16 @@ export async function pollModalJob(
 		};
 	}
 	const fetchFn = deps.fetchFn ?? fetch;
-	const credentials = await resolveModalCredentials(input, deps.secretResolver);
 	const explicitStatusUrl = settings.statusUrl;
-	const url = explicitStatusUrl
-		? explicitStatusUrl.replace('{jobId}', encodeURIComponent(input.providerJobId))
-		: modalEndpoint(settings.appHost, 'job-status', input.baseUrl);
 
 	try {
+		const credentials = await resolveModalCredentials(input, deps.secretResolver);
+		const url = explicitStatusUrl
+			? explicitStatusUrl.replace('{jobId}', encodeURIComponent(input.providerJobId))
+			: modalEndpoint(settings.appHost, 'job-status', input.baseUrl);
+		const s3Bucket = explicitStatusUrl
+			? null
+			: requireModalSetting(settings.s3Bucket, 'ML_ARTIFACT_BUCKET');
 		const resp = await fetchFn(
 			url,
 			explicitStatusUrl
@@ -278,7 +279,7 @@ export async function pollModalJob(
 						body: JSON.stringify({
 							call_id: input.providerJobId,
 							job_name: input.runId ? trainingJobName(input.runId) : undefined,
-							s3_bucket: settings.s3Bucket,
+							s3_bucket: s3Bucket,
 						}),
 					}
 		);
@@ -319,7 +320,7 @@ export async function pollModalJob(
 async function verifyModalControlEndpoints(input: {
 	readonly fetchFn: FetchFn;
 	readonly credentials: ModalCredentials | null;
-	readonly appHost: string;
+	readonly appHost: string | null;
 	readonly baseUrl?: string | null;
 	readonly checkedAt: string;
 }): Promise<ModalActionResult> {
@@ -368,13 +369,13 @@ export async function cancelModalJob(
 		return success(input, 'cancelled', `Modal dry run cancelled for ${input.providerJobId}.`);
 	}
 	const fetchFn = deps.fetchFn ?? fetch;
-	const credentials = await resolveModalCredentials(input, deps.secretResolver);
 	const explicitCancelUrl = settings.cancelUrl;
-	const url = explicitCancelUrl
-		? explicitCancelUrl.replace('{jobId}', encodeURIComponent(input.providerJobId))
-		: modalEndpoint(settings.appHost, 'job-cancel', input.baseUrl);
 
 	try {
+		const credentials = await resolveModalCredentials(input, deps.secretResolver);
+		const url = explicitCancelUrl
+			? explicitCancelUrl.replace('{jobId}', encodeURIComponent(input.providerJobId))
+			: modalEndpoint(settings.appHost, 'job-cancel', input.baseUrl);
 		const resp = await fetchFn(url, {
 			method: 'POST',
 			headers: modalHeaders(credentials, { 'Content-Type': 'application/json' }),
@@ -418,8 +419,11 @@ function modalSettings(input: ModalProviderInput): ModalSettings {
 	const hyperparams = asRecord(raw.hyperparams) ?? {};
 	return {
 		dryRun: raw.dryRun === true,
-		appHost: stringFrom(raw.appHost) ?? stringFrom(raw.app_host) ?? DEFAULT_APP_HOST,
-		s3Bucket: stringFrom(raw.s3Bucket) ?? stringFrom(raw.s3_bucket) ?? DEFAULT_S3_BUCKET,
+		appHost: stringFrom(raw.appHost) ?? stringFrom(raw.app_host) ?? stringFrom(process.env.MODAL_APP_HOST),
+		s3Bucket:
+			stringFrom(raw.s3Bucket) ??
+			stringFrom(raw.s3_bucket) ??
+			stringFrom(process.env.ML_ARTIFACT_BUCKET),
 		gpu: stringFrom(raw.gpuType) ?? stringFrom(raw.gpu) ?? 'a10g',
 		gpuCount: numberFrom(raw.gpuCount) ?? 1,
 		launchUrl: stringFrom(raw.launchUrl),
@@ -437,14 +441,25 @@ function settingsRecord(value: unknown): Record<string, unknown> {
 	return nested ?? root;
 }
 
-function modalEndpoint(appHost: string, fnSlug: string, baseUrl: string | null | undefined): string {
+function modalEndpoint(appHost: string | null, fnSlug: string, baseUrl: string | null | undefined): string {
 	if (baseUrl?.trim()) {
 		const trimmed = baseUrl.trim().replace(/\/$/, '');
 		if (/^https?:\/\//i.test(trimmed)) {
 			return trimmed.replace(/-(spawn-training|spawn-inference|job-status|job-cancel)\.modal\.run/, `-${fnSlug}.modal.run`);
 		}
 	}
+	if (!appHost) {
+		throw new Error('Modal endpoint is not configured: set MODAL_APP_HOST or provide a Modal base URL');
+	}
+	if (!/^[a-z0-9](?:[a-z0-9-]{0,251}[a-z0-9])?$/i.test(appHost)) {
+		throw new Error('MODAL_APP_HOST must be a valid Modal host prefix');
+	}
 	return `https://${appHost}-${fnSlug}.modal.run`;
+}
+
+function requireModalSetting(value: string | null, environmentName: string): string {
+	if (value) return value;
+	throw new Error(`Modal storage is not configured: set ${environmentName} or provide modal.s3Bucket`);
 }
 
 function modalHealthBaseUrl(launchUrl: string | null, baseUrl: string | null | undefined): string | null | undefined {
