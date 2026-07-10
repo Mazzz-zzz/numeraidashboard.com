@@ -1,186 +1,218 @@
-# numeraidashboard.com
+<p align="center">
+  <a href="https://numeraidashboard.com">
+    <img src="frontend/static/favicon.svg" width="96" height="96" alt="Numerai Dashboard logo" />
+  </a>
+</p>
 
-Web dashboard for building, training, and managing Numerai models.
+<h1 align="center">Numerai Dashboard</h1>
 
-## Layout
+<p align="center">
+  Open-source dashboard and ML toolkit for building, training, tracking, and submitting Numerai models.
+</p>
 
-| Path        | What it is                                                                 |
-| ----------- | -------------------------------------------------------------------------- |
-| `frontend/` | SvelteKit app (TypeScript, Vite, static adapter). Production frontend.     |
-| `frontend/amplify/` | AWS Amplify Gen 2 backend — Cognito auth + owner-scoped data models. |
-| `ml/`       | Python ML pipeline — training, analytics, SageMaker entry points.          |
-| `amplify.yml` | Amplify Hosting build spec (builds `frontend/`).                         |
+<p align="center">
+  <a href="https://numeraidashboard.com">Live app</a> |
+  <a href="#quick-start">Quick start</a> |
+  <a href="#integration-status">Integration status</a> |
+  <a href="#license">License</a>
+</p>
 
-## Run the frontend
+> [!IMPORTANT]
+> **Project status: alpha.** Authentication, owner-scoped workspaces, model management,
+> Modal workflows, Prime Intellect pod workflows, and live Numerai account/submission reads
+> are implemented. Some provider actions and round metrics are still contract or prototype
+> paths. Review [Integration status](#integration-status) before using real credentials or
+> paying for compute.
+
+Numerai model operations span datasets, feature pipelines, experiments, compute providers,
+artifacts, model lineage, and tournament submissions. Numerai Dashboard brings those parts
+into one workspace while keeping the executable ML workload available as regular Python.
+
+## Capabilities
+
+- Build and persist model pipelines, branches, sweep plans, and training runs.
+- Connect Numerai and compute-provider accounts without storing plaintext secrets in data rows.
+- Launch, poll, and cancel supported cloud jobs through Amplify Functions.
+- Track compute jobs, model registry entries, lineage, and submission history.
+- Read live Numerai account and per-round submission data.
+- Run the Python workload independently with LightGBM, CatBoost, neural models, TabPFN, or TabICL.
+- Deploy the control plane with AWS Amplify Gen 2, Cognito, AppSync, Lambda, DynamoDB, and SSM.
+
+## Integration Status
+
+| Area | Status | Current boundary |
+| --- | --- | --- |
+| Authentication and workspace data | Working | Cognito email/passkey auth and owner-scoped Amplify Data models. |
+| Credential storage | Working | User credentials are stored as SSM SecureString parameters; data rows contain only owner-scoped references. |
+| Modal | API-backed | Training launch, status, cancellation, and inference/submission paths call Modal endpoints. Token verification is currently format-based. |
+| Prime Intellect | API-backed | Pod launch, polling, cancellation, and template synchronization call the provider API. Provider endpoint assumptions still need broader production validation. |
+| Numerai | Partial | Live account verification and submission-history reads are implemented. Automated score reconciliation and non-Modal upload workers remain incomplete. |
+| SageMaker, local, and custom providers | Contract only | Provider records and deterministic queue transitions exist; Amplify does not yet launch real workers for these providers. |
+| Round metrics | Prototype | `refreshRoundMetrics` currently produces deterministic placeholder snapshots, not live tournament scores. |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    Browser["SvelteKit client"] --> Hosting["Amplify Hosting"]
+    Browser --> Cognito["Cognito auth"]
+    Browser --> Data["Amplify Data / AppSync"]
+    Data --> Store["Owner-scoped DynamoDB records"]
+    Data --> Functions["Amplify Functions"]
+    Functions --> SSM["User-scoped SSM SecureString"]
+    Functions --> Numerai["Numerai API"]
+    Functions --> Modal["Modal worker"]
+    Functions --> Prime["Prime Intellect API"]
+    Modal --> Artifacts["S3 model and prediction artifacts"]
+```
+
+Sensitive function entry points bind the request to the authenticated Cognito subject.
+Secret references must remain under that user's SSM namespace, and outbound provider URLs
+are validated before credentials are resolved.
+
+## Repository Layout
+
+| Path | Purpose |
+| --- | --- |
+| `frontend/` | SvelteKit application, tests, and static assets. |
+| `frontend/amplify/` | Amplify Gen 2 auth, data schema, functions, and IAM configuration. |
+| `ml/` | Python training, inference, analytics, and provider workload code. |
+| `amplify.yml` | Amplify Hosting monorepo build and backend deployment specification. |
+
+## Quick Start
+
+Use a current Node.js LTS release and npm.
 
 ```sh
-cd frontend
-npm install
+git clone https://github.com/Mazzz-zzz/numeraidashboard.com.git
+cd numeraidashboard.com/frontend
+npm ci
 npm run dev
 ```
 
-Test and build:
+The public routes can run without an AWS backend. Authenticated workflows require an
+Amplify sandbox or a generated `amplify_outputs.json` from a deployed environment.
+
+### Full-stack development
+
+Configure AWS credentials for your development account, then start an Amplify sandbox:
 
 ```sh
+cd frontend
+cp .env.example .env.local
+
+# Edit .env.local, then export it for the backend process.
+set -a
+. ./.env.local
+set +a
+
+npm run sandbox
+```
+
+In another terminal:
+
+```sh
+cd frontend
+npm run dev
+```
+
+Use `npm run sandbox:once` for a one-shot sandbox deployment.
+
+## Configuration
+
+Set non-secret deployment defaults once under **Amplify Hosting > Environment variables**:
+
+| Variable | Required | Purpose |
+| --- | --- | --- |
+| `PASSKEY_RELYING_PARTY_ID` | Production | WebAuthn relying-party domain, such as `numeraidashboard.com`. |
+| `MODAL_APP_HOST` | For managed Modal fallback | Modal web-endpoint host prefix used when a provider record does not supply an override. |
+| `ML_ARTIFACT_BUCKET` | For managed Modal fallback | S3 bucket used when a provider record does not supply its own artifact bucket. |
+| `VITE_GA_MEASUREMENT_ID` | No | Public Google Analytics measurement ID. Analytics stays disabled when omitted. |
+
+Per-provider Modal URLs and configuration take precedence over the app-level Modal values.
+Do not put Numerai keys, provider tokens, AWS secret keys, or other credentials in these
+variables. Users enter credentials through Settings; verification functions write them to
+caller-owned SSM SecureString parameters.
+
+## ML Workload
+
+The Python workload can run without the dashboard control plane:
+
+```sh
+cd ml
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python -m pytest tests -q
+python -m training.trainer --feature-set small --output ./output
+```
+
+Numerai credentials are only required for upload paths. Dataset caches, model artifacts,
+checkpoints, and local environment files are ignored by Git. Optional neural and foundation
+models require the additional packages documented in `ml/requirements.txt` and
+[`ml/README.md`](ml/README.md).
+
+## Validation
+
+Run the frontend checks before opening a pull request:
+
+```sh
+cd frontend
 npm test
 npx tsc --noEmit --project tsconfig.json
 npm run build
 ```
 
-## Deployment configuration
-
-Deployment-specific values are not committed to the repository. Configure these
-once as app-level variables under Amplify Hosting > Environment variables:
-
-| Variable | Purpose |
-| --- | --- |
-| `MODAL_APP_HOST` | Modal web endpoint host prefix used by training, polling, cancellation, and submission functions. |
-| `ML_ARTIFACT_BUCKET` | S3 bucket used by the Modal worker for training and inference artifacts. |
-| `PASSKEY_RELYING_PARTY_ID` | WebAuthn relying-party domain, such as `numeraidashboard.com`. |
-| `VITE_GA_MEASUREMENT_ID` | Optional public Google Analytics measurement ID. Analytics stays disabled when omitted. |
-
-These values are non-secret. Numerai and provider credentials remain in
-caller-owned SSM SecureString parameters. Copy `frontend/.env.example` for local
-frontend configuration and export backend values in the shell before running an
-Amplify sandbox.
-
-## Amplify backend (auth + data)
-
-From `frontend/`:
+Run Python tests separately:
 
 ```sh
-npm run sandbox        # watch mode
-npm run sandbox:once   # one-shot deploy
+cd ml
+python -m pytest tests -q
 ```
 
-Auth is Cognito email + passkey. Data models (pipelines, branches, sweeps, runs,
-model registry, model submissions, compute providers, compute jobs) use owner authorization, so each
-signed-in user only sees their own workspace.
+## Deployment
 
-The signed-in routes (`/builder`, `/models`, `/compute`) are gated on auth state
-and hidden from the nav until login. The homepage (`/`) is public.
+The repository is configured as an Amplify monorepo. Connect it to an Amplify Hosting app,
+set the app-level variables above, and deploy `main`. The checked-in `amplify.yml` installs
+locked frontend dependencies, runs `ampx pipeline-deploy`, builds the static SvelteKit app,
+and publishes `frontend/build`.
 
-## Operator handoff
+Changing `PASSKEY_RELYING_PARTY_ID` after users register passkeys invalidates those passkeys.
+Treat the relying-party domain as permanent once a production environment is live.
 
-Use `frontend/` as the operating root.
+## Security Model
 
-```sh
-cd frontend
-npm install
-npm run dev            # local Vite app
-npm test               # Vitest unit tests
-npx tsc --noEmit --project tsconfig.json
-npm run build          # production static build
-npm run sandbox        # Amplify sandbox, watch mode
-npm run sandbox:once   # Amplify sandbox/deploy once
-```
+- Amplify Data models containing user workflows use owner authorization.
+- Secret-aware functions require an authenticated caller identity.
+- Lambda IAM access is limited to the dashboard's SSM parameter namespace.
+- Fresh credentials are written to deterministic caller-owned parameter paths.
+- Provider endpoint validation runs before stored credentials are resolved.
+- Raw credentials are never persisted in GraphQL model rows.
 
-For a demo workspace, sign in and use the Dashboard `Seed demo` action. It
-creates only Amplify Data rows: a placeholder Numerai account with a secret
-reference, a local compute provider, a pipeline, a branch, a sweep, a queued
-training run, a planned compute job, a registry model, a cached round, and a
-sample submission history row.
+This is alpha software that can invoke paid compute and submit tournament predictions.
+Review IAM, provider configuration, budgets, and deployment logs before production use.
 
-Operational records live in Amplify Data:
+## Roadmap
 
-- `NumeraiAccount`, `ComputeProvider`
-- `Pipeline`, `ModelBranch`, `SweepPlan`, `TrainingRun`, `ComputeJob`
-- `ModelRegistryItem`, `ModelSubmission`, `RoundDataset`
+The next reliability milestones are:
 
-Function logs are in the Lambda log groups generated by Amplify for:
+- Replace deterministic round metrics with authoritative Numerai scoring data.
+- Complete non-Modal submission workers and result reconciliation.
+- Add real SageMaker, local, and custom-provider worker adapters.
+- Upgrade provider verification from format checks to authenticated API checks.
+- Enforce provider budgets and concurrency limits at function boundaries.
 
-- `verify-numerai-account`
-- `verify-compute-provider`
-- `start-training`
-- `cancel-training`
-- `poll-training-status`
-- `submit-model`
-- `refresh-round-metrics`
+Use GitHub issues for reproducible bugs and scoped feature proposals. Contributions should
+include focused tests and pass the validation commands above.
 
-Current provider boundaries:
+## License
 
-- Numerai account verification performs a live Numerai GraphQL account check.
-- Provider verification is mixed: local always passes, Modal validates token
-  shape, SageMaker validates role/region shape, Prime Intellect calls the
-  configured account endpoint, and custom requires at least a key or base URL.
-- Training launch/cancel/poll, submission, and round refresh are deterministic
-  frontend-owned function contracts. They update the app state shape now; real
-  provider worker calls should be added inside `frontend/amplify/functions/`.
+Licensed under the [Apache License 2.0](LICENSE).
 
-Secrets are not stored in GraphQL rows. Numerai and provider secrets are written
-by verification functions to SSM SecureString parameters, and data rows store
-only `secretRef`, `apiKeyRef`, or `apiSecretRef`.
+## Disclaimer
 
-Rollback is frontend/Amplify only: revert or redeploy the previous frontend
-commit, rerun `npm run sandbox:once` from `frontend/` if schema/functions changed,
-and disable risky provider rows in `/settings` by setting their status to
-`disabled`. No removed service tree is required for rollback.
-
-## ML pipeline
-
-See `ml/README.md`.
-
-## Removed Legacy Service
-
-The old local service tree was removed after the frontend journeys moved to
-Amplify Data and custom functions. New product work belongs in `frontend/`,
-`frontend/amplify/`, or workload-specific code under `ml/`.
-
-## Design notes
-
-The frontend follows an editorial technical-document style: cream page background,
-sharp black borders, monospace eyebrows, 4px radii, and hard offset shadows with no
-blur. Interactive surfaces should lift top-left on hover/focus with the shadow
-expanding down-right, matching the flow node behavior.
-
-For settings-style drawers, prefer a right-side overlay instead of resizing the
-main canvas. The drawer should use a large responsive width, its own bounded
-scroll area, and enough internal top/left padding so translated focus shadows on
-inputs are not clipped.
-
-## What's next
-
-Honest backlog. Anything checked is shipped on `main`.
-
-### Foundation
-
-- [x] Cognito email + passkey auth wired through `/login`.
-- [x] Owner-scoped Amplify Data models for pipelines, branches, sweeps, runs, registry, submissions, providers, jobs.
-- [x] `NumeraiAccount` model + `/settings` flow canvas for linking Numerai + GPU provider keys.
-- [x] Typed provider configuration fields on `ComputeProvider` (secret refs, workspaceId, awsRoleArn, awsRegion, baseUrl) + per-provider drawer inputs in `/settings` (no more raw-JSON textarea).
-- [x] `verifyNumeraiAccount` and `verifyComputeProvider` custom mutations (Lambdas under `frontend/amplify/functions/`) — real Numerai GraphQL ping, shape/format checks for Modal + SageMaker + Prime Intellect, status stored on `verifiedAt` / `lastVerifyError`.
-- [x] `ModelRegistryItem.parentModelId` + Models Lineage view for lineage.
-- [x] Real CRUD on `/models` (replaces marketing fakery).
-- [x] `frontend/DESIGN.md` editorial visual language.
-- [x] Direct branded add-provider nodes in the `/settings` flow for Prime Intellect, Modal, AWS SageMaker, and Lambda Cloud; selecting one opens the drawer prefilled.
-- [x] Move Numerai + provider secrets out of plaintext GraphQL model rows and into SSM SecureString references.
-
-### Hardening the verify checks
-
-- [ ] Confirm Prime Intellect's real auth-check endpoint (current `/api/v1/me` is a guess; treat any non-2xx other than 404 as failure for now).
-- [ ] Promote SageMaker verify from shape-check to a real `sts:AssumeRole` against the provided role ARN — requires IAM perms on the verify-compute-provider Lambda.
-- [ ] Promote Modal verify from prefix-check to a real API call once their token-introspection endpoint is documented.
-
-### Closing the loop with Numerai
-
-- [x] `submitModel` Amplify function boundary for queued/export Numerai submission actions.
-- [ ] Submission worker that authenticates with the linked `NumeraiAccount` and:
-  - [ ] Pulls each model's `liveCorr`, `liveMmc`, `payoutNmr`, `lastSubmittedRound`, `lastSubmittedAt` and writes them back to `ModelRegistryItem`.
-  - [ ] Posts predictions from a `TrainingRun` artifact to the round.
-- [x] `ModelSubmission` entity for per-round submission planning/history.
-- [ ] Submission worker writes completed round scores and prediction artifact URIs back to `ModelSubmission`.
-- [x] Round/dataset reference cache model (global authenticated cache, not per-user) — round number, open/close times, dataset version.
-
-### Builder + compute
-
-- [x] Wire `/builder` to the real `Pipeline` / `ModelBranch` schema.
-- [x] Wire `/compute` to `ComputeProvider` / `ComputeJob` — provider limits, real queue rows, cancel/retry/status actions.
-- [x] Amplify training action mutations for start, cancel, and provider status polling.
-- [ ] Auto-set `ModelRegistryItem.parentModelId` when a registered model originates from a `TrainingRun` whose branch has a parent. (Right now lineage is manual.)
-- [ ] Cycle guard in the parent picker — currently only blocks self-reference, not multi-hop loops.
-
-### Polish
-
-- [ ] Fix remaining `svelte-check` issues after the Builder and Compute rewrites.
-- [ ] Apply `DESIGN.md` conventions to `/builder`, `/compute`, and the authenticated dashboard.
-- [ ] Decide what to do with `ModelRegistryItem.lineageJson` (currently unused — either populate from a training run snapshot or drop the field).
+This is an independent open-source project. It is not affiliated with or endorsed by
+Numerai, Modal, Prime Intellect, Amazon Web Services, Lambda, or any other provider named
+in the repository. Nothing in this project is financial advice. You are responsible for
+compute charges, credentials, model outputs, tournament submissions, and compliance with
+each provider's terms.
