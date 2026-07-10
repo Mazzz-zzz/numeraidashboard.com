@@ -3,6 +3,7 @@
 	import { page } from '$app/stores';
 	import { goto } from '$app/navigation';
 	import Toast from '$lib/components/Toast.svelte';
+	import { loadGoogleAnalytics } from '$lib/analytics';
 	import { authState, refreshAuth, signOut } from '$lib/auth';
 	import { isFullbleedRoute, isNavItemActive, primaryNavItems } from '$lib/navigation';
 
@@ -11,6 +12,7 @@
 	let userMenuOpen = $state(false);
 
 	onMount(() => {
+		loadGoogleAnalytics(import.meta.env.VITE_GA_MEASUREMENT_ID);
 		refreshAuth();
 	});
 

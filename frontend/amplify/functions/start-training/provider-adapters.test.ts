@@ -92,6 +92,7 @@ describe('training provider adapters', () => {
 			providerConfigJson: {
 				modal: {
 					launchUrl: 'https://modal.example/launch',
+					s3Bucket: 'test-artifacts',
 					gpuType: 't4',
 					gpuCount: 1,
 					hyperparams: {
@@ -141,7 +142,7 @@ describe('training provider adapters', () => {
 			apiKey: 'ak-test',
 			apiSecret: 'as-test',
 			baseUrl: 'https://almaz--openoptions-ml-spawn-training.modal.run',
-			providerConfigJson: { modal: { gpuType: 't4' } },
+			providerConfigJson: { modal: { gpuType: 't4', s3Bucket: 'test-artifacts' } },
 			checkedAt,
 		});
 
@@ -171,6 +172,7 @@ describe('training provider adapters', () => {
 			providerConfigJson: {
 				modal: {
 					launchUrl: 'https://almaz--openoptions-ml-spawn-training.modal.run',
+					s3Bucket: 'test-artifacts',
 					gpuType: 't4',
 				},
 			},
