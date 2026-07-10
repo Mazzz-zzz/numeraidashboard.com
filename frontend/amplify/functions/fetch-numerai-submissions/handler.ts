@@ -1,5 +1,6 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import type { Schema } from '../../data/resource';
+import { ownedSecretRef, requireCallerSub } from '../workflow-security';
 import { fetchNumeraiSubmissions } from './numerai-query';
 
 const ssm = new SSMClient({});
@@ -7,6 +8,16 @@ const ssm = new SSMClient({});
 export const handler: Schema['fetchNumeraiSubmissions']['functionHandler'] = async (event) => {
 	const checkedAt = new Date().toISOString();
 	const { publicId, secretKey, secretRef, numeraiModelIds, maxRounds } = event.arguments;
+	let scopedSecretRef: string | null;
+	try {
+		scopedSecretRef = ownedSecretRef(
+			secretKey?.trim() ? null : secretRef,
+			requireCallerSub(event),
+			'Numerai secret reference'
+		);
+	} catch (e) {
+		return errorResult(e instanceof Error ? e.message : String(e), checkedAt);
+	}
 
 	const trimmedPublicId = publicId?.trim();
 	if (!trimmedPublicId) {
@@ -23,8 +34,8 @@ export const handler: Schema['fetchNumeraiSubmissions']['functionHandler'] = asy
 	try {
 		if (secretKey?.trim()) {
 			resolvedSecret = secretKey.trim();
-		} else if (secretRef?.trim()) {
-			resolvedSecret = await getSecret(secretRef.trim());
+		} else if (scopedSecretRef) {
+			resolvedSecret = await getSecret(scopedSecretRef);
 		}
 	} catch (e) {
 		return errorResult(`Failed to resolve Numerai secret: ${e instanceof Error ? e.message : String(e)}`, checkedAt);

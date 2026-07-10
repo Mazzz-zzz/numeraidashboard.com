@@ -35,7 +35,7 @@ describe('verifyNumeraiAccount handler', () => {
 			arguments: {
 				publicId: 'PUBLIC_ID',
 				secretKey: 'SECRET_KEY',
-				secretRef: null,
+				secretRef: '/numeraidashboard/demo/numerai/secret-key',
 			},
 			identity: { sub: 'user-1', claims: { sub: 'user-1' } },
 		} as never);
@@ -49,5 +49,28 @@ describe('verifyNumeraiAccount handler', () => {
 				}),
 			})
 		);
+		expect(ssmSend.mock.calls[0][0].input.Name).toMatch(
+			/^\/numeraidashboard\/user-1\/numerai\/[a-f0-9]{24}\/secret-key$/
+		);
+	});
+
+	it('rejects another user secret reference before reading SSM or calling Numerai', async () => {
+		const fetchSpy = vi.spyOn(globalThis, 'fetch');
+		const result = await handler({
+			arguments: {
+				publicId: 'PUBLIC_ID',
+				secretKey: null,
+				secretRef: '/numeraidashboard/user-2/numerai/key/secret-key',
+			},
+			identity: { sub: 'user-1', claims: { sub: 'user-1' } },
+		} as never);
+
+		expect(result).toMatchObject({
+			ok: false,
+			secretRef: null,
+		});
+		expect(result.error).toContain("outside the authenticated user's secret scope");
+		expect(ssmSend).not.toHaveBeenCalled();
+		expect(fetchSpy).not.toHaveBeenCalled();
 	});
 });
