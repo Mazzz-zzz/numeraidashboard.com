@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { authState } from '$lib/auth';
+	import GitHubClonePrompt from '$lib/components/GitHubClonePrompt.svelte';
 	import {
 		countActiveWork,
 		latestSubmission,
@@ -533,6 +534,8 @@
 	</section>
 </div>
 {/if}
+
+<GitHubClonePrompt />
 
 <style>
 	.dashboard-page {

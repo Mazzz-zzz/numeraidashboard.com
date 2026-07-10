@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@aws-sdk/client-ssm": "^3.1053.0",
+    "@lucide/svelte": "^1.24.0",
     "@xyflow/svelte": "^1.5.2",
     "aws-amplify": "^6.17.0",
     "lightweight-charts": "^4.2.0",
