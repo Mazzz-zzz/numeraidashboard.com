@@ -1,0 +1,22 @@
+# Numerai v5 feature groups — REFERENCE ONLY
+#
+# Actual group assignments come from features.json (downloaded via numerapi).
+# Use data.features.discover_feature_groups() to build the group dict at runtime.
+#
+# Known groups in Numerai v5:
+#   intelligence  — sentiment, analyst ratings
+#   charisma      — momentum, flow
+#   strength      — fundamentals
+#   dexterity     — volatility, technical
+#   constitution  — stability, quality
+#   wisdom        — wisdom of crowds
+#   agility       — short-term signals
+#   serenity      — low-vol, defensive
+#   sunshine      — (unnamed category)
+#   rain          — (unnamed category)
+#   midnight      — (unnamed category)
+#
+# Feature sets (approximate sizes):
+#   small   — 42 features
+#   medium  — 705 features
+#   all     — 2376 features

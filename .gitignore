@@ -1,0 +1,28 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.aws-sam/
+
+# Node
+node_modules/
+.svelte-kit/
+build/
+dist/
+*.log
+frontend/.amplify/
+frontend/amplify_outputs.json
+
+# Environment
+.env
+.env.local
+.env.production
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store
