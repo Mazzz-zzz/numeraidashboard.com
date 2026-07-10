@@ -1,4 +1,5 @@
 import { defineBackend } from '@aws-amplify/backend';
+import { Stack } from 'aws-cdk-lib';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
@@ -26,16 +27,28 @@ const backend = defineBackend({
 	fetchNumeraiSubmissions,
 });
 
-const secretPolicy = new PolicyStatement({
-	actions: ['ssm:GetParameter', 'ssm:PutParameter'],
-	resources: ['*'],
+const secretParameterArn = Stack.of(backend.verifyNumeraiAccount.resources.lambda).formatArn({
+	service: 'ssm',
+	resource: 'parameter',
+	resourceName: 'numeraidashboard/*',
 });
 
-backend.verifyNumeraiAccount.resources.lambda.addToRolePolicy(secretPolicy);
-backend.verifyComputeProvider.resources.lambda.addToRolePolicy(secretPolicy);
-backend.startTraining.resources.lambda.addToRolePolicy(secretPolicy);
-backend.pollTrainingStatus.resources.lambda.addToRolePolicy(secretPolicy);
-backend.cancelTraining.resources.lambda.addToRolePolicy(secretPolicy);
-backend.syncPrimeTemplate.resources.lambda.addToRolePolicy(secretPolicy);
-backend.submitModel.resources.lambda.addToRolePolicy(secretPolicy);
-backend.fetchNumeraiSubmissions.resources.lambda.addToRolePolicy(secretPolicy);
+const secretReadPolicy = new PolicyStatement({
+	actions: ['ssm:GetParameter'],
+	resources: [secretParameterArn],
+});
+const secretWritePolicy = new PolicyStatement({
+	actions: ['ssm:PutParameter'],
+	resources: [secretParameterArn],
+});
+
+backend.verifyNumeraiAccount.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.verifyNumeraiAccount.resources.lambda.addToRolePolicy(secretWritePolicy);
+backend.verifyComputeProvider.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.verifyComputeProvider.resources.lambda.addToRolePolicy(secretWritePolicy);
+backend.startTraining.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.pollTrainingStatus.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.cancelTraining.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.syncPrimeTemplate.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.submitModel.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.fetchNumeraiSubmissions.resources.lambda.addToRolePolicy(secretReadPolicy);
