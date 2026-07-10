@@ -1,6 +1,6 @@
 import type { Schema } from '../../data/resource';
 import { GetParameterCommand, PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { createHash } from 'node:crypto';
+import { requireCallerSub, secretPath, secureProviderRuntimeArgs } from '../workflow-security';
 
 type Args = Schema['verifyComputeProvider']['args'];
 type Result = {
@@ -15,9 +15,12 @@ type Result = {
 const ssm = new SSMClient({});
 
 export const handler: Schema['verifyComputeProvider']['functionHandler'] = async (event) => {
-	const material = await resolveProviderSecrets(event.arguments, ownerSub(event));
-	const args = { ...event.arguments, apiKey: material.apiKey, apiSecret: material.apiSecret };
-	const err = await verifyByType(args);
+	const owner = requireCallerSub(event);
+	const secured = secureProviderRuntimeArgs(event.arguments, owner);
+	const args = { ...event.arguments, ...secured };
+	const material = await resolveProviderSecrets(args, owner);
+	const verifiedArgs = { ...args, apiKey: material.apiKey, apiSecret: material.apiSecret };
+	const err = await verifyByType(verifiedArgs);
 	if (err) {
 		return {
 			ok: false,
@@ -99,16 +102,6 @@ async function verifySagemaker(a: Args): Promise<string | null> {
 		return 'awsRoleArn does not look like a valid IAM role ARN';
 	if (!a.awsRegion) return 'awsRegion is required';
 	return null;
-}
-
-function ownerSub(event: { identity?: unknown }): string {
-	const identity = event.identity as { sub?: string; claims?: { sub?: string } } | undefined;
-	return identity?.sub ?? identity?.claims?.sub ?? 'unknown-user';
-}
-
-function secretPath(owner: string, scope: string, key: string, name: string): string {
-	const digest = createHash('sha256').update(`${scope}:${key}`).digest('hex').slice(0, 24);
-	return `/numeraidashboard/${owner}/${scope}/${digest}/${name}`;
 }
 
 async function putSecret(name: string, value: string): Promise<void> {

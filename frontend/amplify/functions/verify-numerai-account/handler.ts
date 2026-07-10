@@ -1,13 +1,14 @@
 import type { Schema } from '../../data/resource';
 import { GetParameterCommand, PutParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
-import { createHash } from 'node:crypto';
+import { ownedSecretRef, requireCallerSub, secretPath } from '../workflow-security';
 
 const NUMERAI_GRAPHQL = 'https://api-tournament.numer.ai/';
 const ssm = new SSMClient({});
 
 export const handler: Schema['verifyNumeraiAccount']['functionHandler'] = async (event) => {
 	const { publicId, secretKey, secretRef } = event.arguments;
-	if (!publicId || (!secretKey && !secretRef)) {
+	const trimmedPublicId = publicId?.trim();
+	if (!trimmedPublicId || (!secretKey && !secretRef?.trim())) {
 		return {
 			ok: false,
 			verifiedAt: null,
@@ -19,8 +20,10 @@ export const handler: Schema['verifyNumeraiAccount']['functionHandler'] = async 
 	}
 
 	try {
-		const owner = ownerSub(event);
-		const nextSecretRef = secretRef ?? secretPath(owner, 'numerai', publicId, 'secret-key');
+		const owner = requireCallerSub(event);
+		const nextSecretRef =
+			ownedSecretRef(secretKey ? null : secretRef, owner, 'Numerai secret reference') ??
+			secretPath(owner, 'numerai', trimmedPublicId, 'secret-key');
 		if (secretKey) await putSecret(nextSecretRef, secretKey);
 		const resolvedSecret = secretKey ?? (await getSecret(nextSecretRef));
 
@@ -29,7 +32,7 @@ export const handler: Schema['verifyNumeraiAccount']['functionHandler'] = async 
 			headers: {
 				Accept: 'application/json',
 				'Content-Type': 'application/json',
-				Authorization: `Token ${publicId}$${resolvedSecret}`,
+				Authorization: `Token ${trimmedPublicId}$${resolvedSecret}`,
 			},
 			body: JSON.stringify({ query: 'query { account { username id } }' }),
 		});
@@ -70,22 +73,12 @@ export const handler: Schema['verifyNumeraiAccount']['functionHandler'] = async 
 			ok: false,
 			verifiedAt: null,
 			error: e instanceof Error ? e.message : String(e),
-			secretRef: secretRef ?? null,
+			secretRef: null,
 			apiKeyRef: null,
 			apiSecretRef: null,
 		};
 	}
 };
-
-function ownerSub(event: { identity?: unknown }): string {
-	const identity = event.identity as { sub?: string; claims?: { sub?: string } } | undefined;
-	return identity?.sub ?? identity?.claims?.sub ?? 'unknown-user';
-}
-
-function secretPath(owner: string, scope: string, key: string, name: string): string {
-	const digest = createHash('sha256').update(`${scope}:${key}`).digest('hex').slice(0, 24);
-	return `/numeraidashboard/${owner}/${scope}/${digest}/${name}`;
-}
 
 async function putSecret(name: string, value: string): Promise<void> {
 	await ssm.send(
