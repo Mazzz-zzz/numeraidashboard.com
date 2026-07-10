@@ -243,7 +243,7 @@ def _run_training_inner(
         "d_token", "n_blocks", "n_heads", "attn_dropout", "ff_dropout",
         # TabPFN / TabICL
         "n_bags", "context_rows", "features_per_bag", "n_recent_eras", "n_estimators_per_bag",
-        "norm_methods",
+        "norm_methods", "device", "offload_mode", "use_amp", "use_fa3",
     }
     model_kwargs = {k: v for k, v in hyperparams.items() if k in MODEL_KWARGS_KEYS}
     if model_kwargs:

@@ -6,6 +6,13 @@
 	import ModelLineageView from '$lib/components/ModelLineageView.svelte';
 	import ModelSubmitView from '$lib/components/ModelSubmitView.svelte';
 	import {
+		listComputeJobs,
+		listComputeProviders,
+		type ComputeJob,
+		type ComputeProvider
+	} from '$lib/services/compute-service';
+	import { refreshModelTraining } from '$lib/services/model-launch-service';
+	import {
 		createRegistryModel,
 		deleteRegistryModel,
 		listRegistryModels,
@@ -32,10 +39,18 @@
 	let models = $state<ModelRegistryItem[]>([]);
 	let submissions = $state<ModelSubmission[]>([]);
 	let rounds = $state<RoundDataset[]>([]);
+	let jobs = $state<ComputeJob[]>([]);
+	let providers = $state<ComputeProvider[]>([]);
 	let loading = $state(true);
+	let autoRefreshing = $state(false);
 	let stageFilter = $state<ModelStage | 'all'>('all');
 	let viewMode = $state<'registry' | 'lineage' | 'submit'>('registry');
 	let refreshError = $state<string | null>(null);
+
+	// Training status only advances when something polls the compute provider and
+	// writes the new stage back. Mirror the Launch page's auto-refresh so a model
+	// left on this page still flips training -> success/failed on its own.
+	const AUTO_REFRESH_MS = 10_000;
 
 	type Drawer =
 		| { kind: 'none' }
@@ -54,6 +69,10 @@
 
 	onMount(() => {
 		if ($authState.user) void load();
+		const interval = window.setInterval(() => {
+			if ($authState.user) void refreshTrainingModels();
+		}, AUTO_REFRESH_MS);
+		return () => window.clearInterval(interval);
 	});
 
 	$effect(() => {
@@ -63,18 +82,90 @@
 	async function load() {
 		loading = true;
 		try {
-			const [modelRows, submissionRows, roundRows] = await Promise.all([
+			const [modelRows, submissionRows, roundRows, jobRows, providerRows] = await Promise.all([
 				listRegistryModels(),
 				listModelSubmissions(),
-				listRoundDatasets()
+				listRoundDatasets(),
+				listComputeJobs(),
+				listComputeProviders()
 			]);
 			models = modelRows;
 			submissions = submissionRows;
 			rounds = roundRows;
+			jobs = jobRows;
+			providers = providerRows;
 		} catch (e) {
 			addToast(asMessage(e, 'Failed to load models'), 'error');
 		} finally {
 			loading = false;
+		}
+	}
+
+	function jobForModel(model: ModelRegistryItem): ComputeJob | undefined {
+		return model.runId ? jobs.find((job) => job.runId === model.runId) : undefined;
+	}
+
+	function upsertModel(model: ModelRegistryItem) {
+		models = models.map((item) => (item.id === model.id ? model : item));
+	}
+
+	function upsertJob(job: ComputeJob) {
+		jobs = [job, ...jobs.filter((item) => item.id !== job.id)];
+	}
+
+	// Poll every model currently marked `training`, flip its stage when the
+	// provider reports completion, and toast the transition. Models whose compute
+	// job/provider link is missing can't be polled — surface that instead of
+	// silently leaving them stuck on "Training" forever.
+	async function refreshTrainingModels() {
+		if (loading || autoRefreshing) return;
+		const training = models.filter((model) => model.stage === 'training');
+		if (!training.length) return;
+
+		const candidates = training
+			.map((model) => {
+				const job = jobForModel(model);
+				const provider = providers.find((item) => item.id === job?.providerId);
+				return job && provider ? { model, job, provider } : null;
+			})
+			.filter(
+				(item): item is { model: ModelRegistryItem; job: ComputeJob; provider: ComputeProvider } =>
+					item !== null
+			);
+
+		const stranded = training.length - candidates.length;
+		const strandedMsg = stranded
+			? `${stranded} training model${stranded === 1 ? '' : 's'} can't auto-refresh — no linked compute job or provider.`
+			: null;
+		if (!candidates.length) {
+			refreshError = strandedMsg;
+			return;
+		}
+
+		autoRefreshing = true;
+		try {
+			const results = await Promise.allSettled(
+				candidates.map(async ({ model, job, provider }) => {
+					const previousStage = model.stage;
+					const result = await refreshModelTraining({ model, job, provider });
+					upsertModel(result.model);
+					upsertJob(result.job);
+					if (previousStage === 'training' && result.model.stage !== 'training') {
+						addToast(
+							`${result.model.name} is ${modelStageLabels[result.model.stage as ModelStage].toLowerCase()}.`,
+							result.model.stage === 'success' ? 'success' : 'error'
+						);
+					}
+				})
+			);
+			// Surface a poll that threw instead of leaving the model silently stuck
+			// on "Training" with no explanation.
+			const failure = results.find((r) => r.status === 'rejected') as PromiseRejectedResult | undefined;
+			refreshError = failure
+				? `Training refresh failed: ${asMessage(failure.reason, 'unknown error')}`
+				: strandedMsg;
+		} finally {
+			autoRefreshing = false;
 		}
 	}
 
@@ -253,7 +344,7 @@
 				<h1>Your registered Numerai models.</h1>
 				<p class="lede">
 					Register a model in the dashboard so submissions, scores, and lineage flow back into one
-					place. Stages move manually here until a submission worker reports them.
+					place. Training models refresh automatically; other stages move manually here.
 				</p>
 				<p class="round-cache" class:stale={roundFreshness === 'Round cache stale'}>
 					{roundLabel(latestRound)} · {roundFreshness}

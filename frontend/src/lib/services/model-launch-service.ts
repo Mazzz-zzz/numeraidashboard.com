@@ -27,9 +27,24 @@ export const DEFAULT_MODAL_SMOKE_HYPERPARAMS = {
 	target_cols: ['target_ender_20']
 } as const;
 
+// Fast, MPS-friendly defaults for a local smoke run on an Apple Silicon Mac.
+export const DEFAULT_LOCAL_TRAINING_CONFIG = {
+	model_type: 'mlp',
+	feature_set: 'small',
+	neutralization_pct: 25,
+	upload: false,
+	hyperparams: {
+		max_train_eras: 20,
+		single_target_mode: true,
+		target_col: 'target_ender_20'
+	}
+} as const;
+
 export type ModelTrainingResult = {
 	readonly model: ModelRegistryItem;
-	readonly run: TrainingRun;
+	// null when the TrainingRun bookkeeping row could not be updated during a
+	// best-effort refresh — the model stage is still authoritative.
+	readonly run: TrainingRun | null;
 	readonly job: ComputeJob;
 	readonly action: TrainingActionResult;
 };
@@ -90,7 +105,11 @@ export async function launchModelDraft(
 		{
 			runId: run.id,
 			provider: input.provider,
-			providerConfigJson: providerConfigForLaunch(input.provider, input.gpuType ?? null)
+			providerConfigJson: providerConfigForLaunch(
+				input.provider,
+				input.gpuType ?? null,
+				jsonRecord(lineage.runConfig)
+			)
 		},
 		client
 	);
@@ -128,15 +147,10 @@ export async function refreshModelTraining(
 		},
 		client
 	);
-	const job = await persistJobAction(input.job, action, client);
-	const run = await updateTrainingRunFromAction(
-		{
-			runId: input.job.runId,
-			action,
-			currentStartedAt: input.job.startedAt ?? null
-		},
-		client
-	);
+
+	// Write the user-visible model stage FIRST. The ComputeJob / TrainingRun rows
+	// below are bookkeeping — a failure updating either must never throw before
+	// the model flips, or a finished run stays stuck on "Training" forever.
 	const model = await persistModelAction(
 		{
 			model: input.model,
@@ -148,6 +162,27 @@ export async function refreshModelTraining(
 		},
 		client
 	);
+
+	let job = input.job;
+	try {
+		job = await persistJobAction(input.job, action, client);
+	} catch (error) {
+		console.warn(`ComputeJob.update failed for job ${input.job.id}; model stage already applied.`, error);
+	}
+
+	let run: TrainingRun | null = null;
+	try {
+		run = await updateTrainingRunFromAction(
+			{
+				runId: input.job.runId,
+				action,
+				currentStartedAt: input.job.startedAt ?? null
+			},
+			client
+		);
+	} catch (error) {
+		console.warn(`TrainingRun.update failed for run ${input.job.runId}; model stage already applied.`, error);
+	}
 
 	return { model, run, job, action };
 }
@@ -335,8 +370,49 @@ function jsonRecord(value: unknown): Record<string, unknown> {
 	}
 }
 
-export function providerConfigForLaunch(provider: ComputeProvider, gpuType: string | null): unknown {
+// Top-level local training fields; everything else in runConfig is forwarded
+// as a hyperparam (the daemon ignores keys it doesn't recognise).
+const LOCAL_TOP_LEVEL_KEYS = new Set([
+	'mode',
+	'tournament',
+	'model_type',
+	'feature_set',
+	'neutralization_pct',
+	'upload'
+]);
+
+export function providerConfigForLaunch(
+	provider: ComputeProvider,
+	gpuType: string | null,
+	runConfig?: Record<string, unknown> | null
+): unknown {
 	const config = jsonObjectValue(provider.credentialsJson);
+	if (provider.providerType === 'local') {
+		// Local runs go to the on-machine daemon. Build the request from the
+		// model's runConfig (model_type/feature_set/hyperparams chosen in the
+		// builder), falling back to MPS-friendly defaults and any provider-level
+		// overrides under a `local` key.
+		const rc = runConfig ?? {};
+		const local = recordOrNull(config?.local) ?? {};
+		const rcHyperparams = Object.fromEntries(
+			Object.entries(rc).filter(([key]) => !LOCAL_TOP_LEVEL_KEYS.has(key))
+		);
+		return jsonObjectValue({
+			...config,
+			local: {
+				model_type: rc.model_type ?? local.model_type ?? DEFAULT_LOCAL_TRAINING_CONFIG.model_type,
+				feature_set: rc.feature_set ?? local.feature_set ?? DEFAULT_LOCAL_TRAINING_CONFIG.feature_set,
+				neutralization_pct:
+					rc.neutralization_pct ?? local.neutralization_pct ?? DEFAULT_LOCAL_TRAINING_CONFIG.neutralization_pct,
+				upload: (rc.upload ?? local.upload ?? DEFAULT_LOCAL_TRAINING_CONFIG.upload) === true,
+				hyperparams: {
+					...DEFAULT_LOCAL_TRAINING_CONFIG.hyperparams,
+					...rcHyperparams,
+					...(recordOrNull(local.hyperparams) ?? {})
+				}
+			}
+		});
+	}
 	const selectedGpu = assertProviderGpu(provider, gpuType);
 	if (!selectedGpu) return config;
 	if (provider.providerType === 'prime_intellect') {

@@ -8,6 +8,7 @@ meta model, and benchmark model predictions (v5.2).
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -17,6 +18,33 @@ from config.settings import get_ml_settings
 
 
 DATA_DIR = Path(__file__).parent.parent / "data_cache"
+
+
+@contextmanager
+def _download_lock(dest: Path):
+    """Serialize dataset downloads across processes.
+
+    Parallel local training jobs share one data_cache/. Without a lock, two
+    jobs downloading the same round race on numerapi's temp-file rename and
+    corrupt the parquet. Holding an exclusive file lock during the download
+    loop makes the first job download while others wait, then find everything
+    cached. No-op if fcntl is unavailable (non-POSIX).
+    """
+    try:
+        import fcntl
+    except ImportError:
+        yield
+        return
+    dest.mkdir(parents=True, exist_ok=True)
+    lock_file = open(dest / ".download.lock", "w")  # noqa: SIM115
+    try:
+        fcntl.flock(lock_file, fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            fcntl.flock(lock_file, fcntl.LOCK_UN)
+        finally:
+            lock_file.close()
 
 # Numerai v5.2 dataset paths (Faith2 update, Dec 2025)
 DATASET_VERSION = "v5.2"
@@ -51,6 +79,11 @@ def download_current_round(dest: Optional[Path] = None) -> Path:
     dest = dest or DATA_DIR
     dest.mkdir(parents=True, exist_ok=True)
 
+    with _download_lock(dest):
+        return _download_round_files(dest)
+
+
+def _download_round_files(dest: Path) -> Path:
     napi = _get_napi()
     current_round = napi.get_current_round()
 

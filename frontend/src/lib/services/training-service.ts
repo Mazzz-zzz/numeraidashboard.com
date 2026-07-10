@@ -3,6 +3,12 @@ import { requireAuthSession } from '$lib/auth';
 import type { Schema } from '../../../amplify/data/resource';
 import type { ComputeJobStatus, ComputeProvider } from './compute-service';
 import type { TrainingRun } from './pipeline-service';
+import { cancelLocalTraining, launchLocalTraining, pollLocalTraining } from './local-training-service';
+
+/** Local runs execute on the user's machine via the local daemon, not AWS. */
+function isLocalProvider(provider: ComputeProvider): boolean {
+	return providerTypeArgument(provider) === 'local';
+}
 
 type Client = ReturnType<typeof dataClient>;
 
@@ -122,8 +128,18 @@ export async function updateTrainingRunFromAction(
 ): Promise<TrainingRun> {
 	await requireAuthSession();
 	const patch = trainingRunPatchFromAction(input);
-	const { data } = await client.models.TrainingRun.update(patch);
-	if (!data) throw new Error('TrainingRun.update returned no data');
+	const { data, errors } = await client.models.TrainingRun.update(patch);
+	if (errors?.length) {
+		throw new Error(
+			errors.map((error) => error.message).filter(Boolean).join('; ') ||
+				`TrainingRun.update failed for run ${input.runId}`
+		);
+	}
+	if (!data) {
+		// A null result with no errors almost always means the row doesn't exist
+		// for this runId (e.g. the run was launched outside the dashboard flow).
+		throw new Error(`TrainingRun.update returned no data — no run found for id ${input.runId}`);
+	}
 	return data as TrainingRun;
 }
 
@@ -143,6 +159,13 @@ export async function startTrainingRun(
 	client: Client = dataClient()
 ): Promise<TrainingActionResult> {
 	await requireAuthSession();
+	if (isLocalProvider(input.provider)) {
+		return launchLocalTraining({
+			runId: input.runId,
+			provider: input.provider,
+			providerConfigJson: input.providerConfigJson ?? input.provider.credentialsJson
+		});
+	}
 	const { data, errors } = await client.mutations.startTraining({
 		runId: input.runId,
 		providerId: input.provider.id,
@@ -159,6 +182,13 @@ export async function cancelTrainingRun(
 	client: Client = dataClient()
 ): Promise<TrainingActionResult> {
 	await requireAuthSession();
+	if (isLocalProvider(input.provider)) {
+		return cancelLocalTraining({
+			runId: input.runId,
+			provider: input.provider,
+			providerJobId: input.providerJobId ?? null
+		});
+	}
 	const { data, errors } = await client.mutations.cancelTraining({
 		runId: input.runId,
 		providerId: input.provider.id,
@@ -176,6 +206,13 @@ export async function pollTrainingRunStatus(
 	client: Client = dataClient()
 ): Promise<TrainingActionResult> {
 	await requireAuthSession();
+	if (isLocalProvider(input.provider)) {
+		return pollLocalTraining({
+			runId: input.runId,
+			provider: input.provider,
+			providerJobId: input.providerJobId ?? null
+		});
+	}
 	const { data, errors } = await client.mutations.pollTrainingStatus({
 		runId: input.runId,
 		providerId: input.provider.id,

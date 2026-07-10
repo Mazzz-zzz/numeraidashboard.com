@@ -3,12 +3,12 @@
 
 	let { children, tip }: { children: Snippet; tip: string } = $props();
 	let show = $state(false);
-	let el: HTMLSpanElement;
 </script>
 
-<span
+<button
+	type="button"
 	class="tooltip-wrap"
-	bind:this={el}
+	aria-label={tip}
 	onmouseenter={() => (show = true)}
 	onmouseleave={() => (show = false)}
 	onfocusin={() => (show = true)}
@@ -20,11 +20,19 @@
 			{tip}
 		</div>
 	{/if}
-</span>
+</button>
 
 <style>
 	.tooltip-wrap {
 		position: relative;
+		display: inline-flex;
+		align-items: center;
+		justify-content: center;
+		padding: 0;
+		border: 0;
+		background: transparent;
+		color: inherit;
+		font: inherit;
 		cursor: help;
 	}
 

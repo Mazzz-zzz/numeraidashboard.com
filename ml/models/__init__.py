@@ -5,9 +5,16 @@ from __future__ import annotations
 from typing import Optional
 
 from models.base import NumeraiModel
-from models.lgbm_model import LightGBMModel
 
-# Optional imports - models that may not be installed
+# Optional imports - models whose heavy/native deps may not be installed.
+# LightGBM is optional too: it needs libomp, which a torch-only (MPS) box may
+# not have. Catching Exception (not just ImportError) covers the libomp OSError
+# raised at load time, so neural models still work without LightGBM installed.
+try:
+    from models.lgbm_model import LightGBMModel
+except Exception:
+    LightGBMModel = None
+
 try:
     from models.catboost_model import CatBoostModel
 except ImportError:
@@ -80,6 +87,11 @@ def create_model(
     model_type = model_type.lower()
     
     if model_type == "lgbm":
+        if LightGBMModel is None:
+            raise RuntimeError(
+                "LightGBM not available. Install with: pip install lightgbm "
+                "(macOS also needs libomp: brew install libomp)."
+            )
         return LightGBMModel(
             num_leaves=num_leaves,
             max_depth=max_depth,
@@ -207,7 +219,8 @@ def create_model(
         tabicl_keys = {
             "n_bags", "context_rows", "features_per_bag",
             "n_recent_eras", "n_estimators_per_bag",
-            "norm_methods",
+            "norm_methods", "device", "offload_mode", "use_amp", "use_fa3",
+            "batch_size",
         }
         tabicl_kwargs = {k: v for k, v in kwargs.items() if k in tabicl_keys}
         return TabICLModel(**tabicl_kwargs)
@@ -222,7 +235,9 @@ def create_model(
 
 def list_available_models() -> list[str]:
     """Return list of available model types."""
-    models = ["lgbm"]
+    models = []
+    if LightGBMModel is not None:
+        models.append("lgbm")
     if CatBoostModel is not None:
         models.append("catboost")
     if MLPModel is not None:

@@ -54,6 +54,35 @@ pip install -r requirements.txt
 python3 -m training.trainer --feature-set small --output ./output
 ```
 
+### macOS: libomp (required for LightGBM)
+
+LightGBM needs the **libomp** system library (the OpenMP runtime), which pip
+cannot install. On macOS:
+
+```bash
+brew install libomp        # standard install
+```
+
+If you don't use Homebrew but have torch installed (for the neural/MPS models),
+run the bundled helper — it points LightGBM at torch's own libomp, no brew
+needed:
+
+```bash
+PY=python3 ml/local/setup_libomp.sh
+```
+
+libomp is **only** needed for LightGBM. The neural models (MLP, TabM,
+FT-Transformer, ModernNCA) and foundation models (TabPFN, TabICL) don't need it,
+and run on the Apple Silicon (MPS) GPU automatically.
+
+### Apple Silicon (MPS) GPU
+
+The torch-based models pick the best device automatically (`cuda → mps → cpu`);
+on a Mac they use the Metal GPU with no config. Force a device with
+`NUMERAI_TORCH_DEVICE=cpu|mps|cuda`. See `config/device.py`. To drive training
+from the dashboard, the local daemon (`ml/local/daemon.py`) is started
+automatically by the frontend's `npm run dev`.
+
 Numerai credentials are only needed for upload/submission paths:
 
 ```bash

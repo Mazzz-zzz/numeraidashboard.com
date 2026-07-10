@@ -1,0 +1,15 @@
+# Local training artifacts (daemon jobs, downloaded data, model outputs)
+data_cache/
+output/
+__pycache__/
+.pytest_cache/
+
+# Numerai dataset + model artifacts
+*.parquet
+*.pt
+*.pth
+*.ckpt
+
+# Local env / secrets
+.env
+.env.*

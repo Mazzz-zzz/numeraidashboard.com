@@ -1,5 +1,12 @@
+# NOTE (macOS): LightGBM needs the libomp system library (OpenMP runtime),
+# which pip cannot install. Install it with `brew install libomp`, or — if you
+# don't use Homebrew but have torch installed — run `ml/local/setup_libomp.sh`
+# to point LightGBM at torch's bundled libomp. Not needed for the neural (MPS)
+# models below.
 lightgbm>=4.0.0
 numerapi==2.18.0
+# numerapi 2.18 imports pkg_resources, which setuptools removed in newer releases.
+setuptools<81
 pandas>=2.0.0
 numpy>=1.24.0
 scikit-learn>=1.3.0

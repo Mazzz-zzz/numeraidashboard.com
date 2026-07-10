@@ -27,6 +27,36 @@
 	let selectedMetric = $state<TrackedMetric>('canon_corr');
 	let showSubmit = $state(false);
 
+	const modelUploadLifecycle = [
+		{
+			status: 'Pending',
+			body: 'Numerai is provisioning the run environment for the uploaded model.'
+		},
+		{
+			status: 'Running',
+			body: 'The model is executing against the current live data.'
+		},
+		{
+			status: 'Validating',
+			body: 'Predictions were generated and are being checked before acceptance.'
+		},
+		{
+			status: 'Success',
+			body: 'The live submission was accepted and can be reviewed with diagnostics.'
+		}
+	] as const;
+
+	const modelUploadFailures = [
+		{
+			status: 'Failed',
+			body: 'Usually points to model code, dependency, memory, timeout, or invalid submission issues.'
+		},
+		{
+			status: 'Error',
+			body: 'Numerai hit an unexpected platform-side problem while running the model.'
+		}
+	] as const;
+
 	onMount(() => {
 		if ($authState.user) void load();
 	});
@@ -152,6 +182,32 @@
 		{:else if bundleError}
 			<div class="alert">{bundleError}</div>
 		{/if}
+
+		<section class="lifecycle" aria-labelledby="lifecycle-title">
+			<div>
+				<h2 id="lifecycle-title">Model upload lifecycle</h2>
+				<p>
+					After a model is uploaded, Numerai runs it daily and moves it through execution,
+					validation, and acceptance states before diagnostics are useful.
+				</p>
+			</div>
+			<ol class="lifecycle-steps">
+				{#each modelUploadLifecycle as item}
+					<li>
+						<strong>{item.status}</strong>
+						<span>{item.body}</span>
+					</li>
+				{/each}
+			</ol>
+			<div class="failure-legend" aria-label="Failure states">
+				{#each modelUploadFailures as item}
+					<div>
+						<strong>{item.status}</strong>
+						<span>{item.body}</span>
+					</div>
+				{/each}
+			</div>
+		</section>
 
 		{#if !loading && models.length === 0}
 			<p class="muted">No models yet. Create one in <a href="/models">Models</a>.</p>
@@ -364,6 +420,86 @@
 	.muted {
 		color: var(--text-secondary);
 		font-size: 0.9rem;
+	}
+
+	.lifecycle {
+		display: grid;
+		grid-template-columns: minmax(220px, 0.85fr) minmax(420px, 1.5fr);
+		gap: 1rem;
+		align-items: start;
+		background: var(--bg-card);
+		border: 1px solid var(--border);
+		border-radius: 8px;
+		padding: 1rem;
+	}
+	.lifecycle h2 {
+		margin: 0;
+		font-size: 0.95rem;
+	}
+	.lifecycle p {
+		margin: 0.35rem 0 0;
+		color: var(--text-secondary);
+		font-size: 0.82rem;
+		line-height: 1.45;
+	}
+	.lifecycle-steps {
+		list-style: none;
+		margin: 0;
+		padding: 0;
+		display: grid;
+		grid-template-columns: repeat(4, minmax(0, 1fr));
+		gap: 0.5rem;
+	}
+	.lifecycle-steps li,
+	.failure-legend div {
+		min-height: 92px;
+		border: 1px solid var(--border-light);
+		background: var(--bg-input);
+		border-radius: 6px;
+		padding: 0.65rem;
+		display: flex;
+		flex-direction: column;
+		gap: 0.3rem;
+	}
+	.lifecycle-steps strong,
+	.failure-legend strong {
+		font-size: 0.72rem;
+		text-transform: uppercase;
+		letter-spacing: 0.08em;
+	}
+	.lifecycle-steps span,
+	.failure-legend span {
+		color: var(--text-secondary);
+		font-size: 0.76rem;
+		line-height: 1.35;
+	}
+	.failure-legend {
+		grid-column: 2;
+		display: grid;
+		grid-template-columns: repeat(2, minmax(0, 1fr));
+		gap: 0.5rem;
+	}
+	.failure-legend div {
+		min-height: auto;
+		background: var(--badge-red);
+		border-color: rgba(207, 34, 46, 0.25);
+	}
+	@media (max-width: 1000px) {
+		.lifecycle {
+			grid-template-columns: 1fr;
+		}
+		.lifecycle-steps {
+			grid-template-columns: repeat(2, minmax(0, 1fr));
+		}
+		.failure-legend {
+			grid-column: auto;
+		}
+	}
+	@media (max-width: 620px) {
+		.lifecycle-steps,
+		.failure-legend {
+			grid-template-columns: 1fr;
+		}
 	}
 
 	.layout {

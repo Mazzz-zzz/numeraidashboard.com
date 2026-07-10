@@ -289,6 +289,65 @@ class TestTabICLModel:
         from models.tabicl_model import TabICLModel
         assert TabICLModel().model_type == "tabicl"
 
+    def test_mps_runtime_defaults_fall_back_to_cpu(self, monkeypatch):
+        from models.tabicl_model import TabICLModel
+
+        monkeypatch.delenv("NUMERAI_TABICL_ALLOW_MPS", raising=False)
+        model = TabICLModel(device="mps")
+
+        assert model._device == "cpu"
+        assert model.offload_mode == "auto"
+        assert model.use_amp is False
+        assert model.use_fa3 is False
+
+    def test_mps_runtime_can_be_forced_for_experiments(self, monkeypatch):
+        from models.tabicl_model import TabICLModel
+
+        monkeypatch.setenv("NUMERAI_TABICL_ALLOW_MPS", "1")
+        model = TabICLModel(device="mps")
+
+        assert model._device == "mps"
+        assert model.offload_mode == "auto"
+        assert model.use_amp == "auto"
+        assert model.use_fa3 is False
+
+    def test_make_regressor_passes_mps_safe_options(self, monkeypatch):
+        import models.tabicl_model as tabicl_model
+        from models.tabicl_model import TabICLModel
+
+        captured = {}
+
+        class FakeRegressor:
+            def __init__(self, **kwargs):
+                captured.update(kwargs)
+
+            def fit(self, X, y):
+                self.model_ = object()
+                self.model_config_ = {"fake": True}
+                self.model_path_ = None
+
+        monkeypatch.setattr(tabicl_model, "TabICLRegressor", FakeRegressor)
+        monkeypatch.setenv("NUMERAI_TABICL_ALLOW_MPS", "1")
+
+        model = TabICLModel(
+            device="mps",
+            n_estimators_per_bag=3,
+            offload_mode="auto",
+            use_amp="auto",
+            use_fa3="auto",
+            batch_size=7,
+        )
+        model._make_regressor(
+            {"X": np.zeros((4, 2), dtype=np.float32), "y": np.zeros(4, dtype=np.float32), "seed": 123},
+            model._device,
+        )
+
+        assert captured["device"] == "mps"
+        assert captured["offload_mode"] == "auto"
+        assert captured["use_amp"] == "auto"
+        assert captured["use_fa3"] is False
+        assert captured["batch_size"] == 7
+
     def test_no_fillna(self, feature_cols, val_data):
         """TabICL should preserve NaN values (not fill them)."""
         from models.tabicl_model import TabICLModel
@@ -340,6 +399,26 @@ class TestModelFactory:
         from models import create_model
         model = create_model(model_type="tabicl", n_bags=2)
         assert model.model_type == "tabicl"
+
+    @pytest.mark.skipif(not HAS_TABICL, reason="TabICL not installed")
+    def test_create_tabicl_falls_back_from_mps_by_default(self, monkeypatch):
+        from models import create_model
+
+        monkeypatch.delenv("NUMERAI_TABICL_ALLOW_MPS", raising=False)
+        model = create_model(
+            model_type="tabicl",
+            device="mps",
+            offload_mode="auto",
+            use_amp="auto",
+            use_fa3="auto",
+            batch_size=9,
+        )
+
+        assert model._device == "cpu"
+        assert model.offload_mode == "auto"
+        assert model.use_amp is False
+        assert model.use_fa3 is False
+        assert model.batch_size == 9
 
     def test_unknown_model_raises(self):
         from models import create_model

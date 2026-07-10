@@ -6,6 +6,11 @@
 	import { listComputeJobs, listComputeProviders, type ComputeJob, type ComputeProvider } from '$lib/services/compute-service';
 	import { launchModelDraft, launchTrainingToast, refreshModelTraining } from '$lib/services/model-launch-service';
 	import { gpuOptionsForProvider, selectedGpuForProvider } from '$lib/services/provider-gpu-catalog';
+	import {
+		fetchLocalDaemonHealth,
+		setLocalDaemonMaxParallel,
+		type LocalDaemonHealth
+	} from '$lib/services/local-training-service';
 	import { trainingProgressForJob } from '$lib/services/training-progress';
 	import {
 		listRegistryModels,
@@ -16,7 +21,13 @@
 	} from '$lib/services/registry-service';
 
 	let loading = $state(true);
-	let busy = $state(false);
+	// Per-model in-flight tracking so one model's launch/refresh doesn't disable
+	// the buttons on every other row (the old single `busy` flag did).
+	let pendingIds = $state<string[]>([]);
+	const isPending = (id: string) => pendingIds.includes(id);
+	function setPending(id: string, on: boolean) {
+		pendingIds = on ? [...pendingIds, id] : pendingIds.filter((item) => item !== id);
+	}
 	let models = $state<ModelRegistryItem[]>([]);
 	let providers = $state<ComputeProvider[]>([]);
 	let jobs = $state<ComputeJob[]>([]);
@@ -24,11 +35,23 @@
 	let selectedGpuType = $state('');
 	let autoRefreshing = $state(false);
 	let now = $state(new Date());
+	let localHealth = $state<LocalDaemonHealth | null>(null);
 
-	const AUTO_REFRESH_MS = 30_000;
+	const AUTO_REFRESH_MS = 10_000;
+	const LOCAL_HEALTH_MS = 4_000;
 
 	const providerOptions = $derived(providers.filter((provider) => provider.status !== 'disabled'));
 	const selectedProvider = $derived(providerOptions.find((provider) => provider.id === selectedProviderId));
+	const localProvider = $derived(providers.find((provider) => provider.providerType === 'local'));
+	// driver_allocated_memory (total Metal/CUDA working set) is the truest
+	// "in use" figure; fall back to the live-tensor number if it's missing.
+	const localUsedMb = $derived(localHealth?.driverMb ?? localHealth?.allocatedMb ?? 0);
+	const localMemPct = $derived(
+		localUsedMb && localHealth?.recommendedMaxMb
+			? Math.min(100, Math.round((localUsedMb / localHealth.recommendedMaxMb) * 100))
+			: 0
+	);
+	const localGb = (mb?: number) => (mb ? (mb / 1024).toFixed(1) : '0.0');
 	const gpuOptions = $derived(gpuOptionsForProvider(selectedProvider));
 	const launchModels = $derived(
 		models.filter((model) => model.stage === 'draft' || model.stage === 'training' || model.stage === 'failed' || model.stage === 'success')
@@ -41,8 +64,28 @@
 			if ($authState.user) void refreshTrainingModels();
 		}, AUTO_REFRESH_MS);
 
-		return () => window.clearInterval(interval);
+		void refreshLocalHealth();
+		const healthInterval = window.setInterval(() => void refreshLocalHealth(), LOCAL_HEALTH_MS);
+
+		return () => {
+			window.clearInterval(interval);
+			window.clearInterval(healthInterval);
+		};
 	});
+
+	async function refreshLocalHealth() {
+		localHealth = await fetchLocalDaemonHealth(localProvider ?? null);
+	}
+
+	async function updateMaxParallel(value: number) {
+		if (!localHealth) return;
+		localHealth = { ...localHealth, maxParallel: value }; // optimistic
+		const applied = await setLocalDaemonMaxParallel(value, localProvider ?? null);
+		if (applied != null && applied !== value) {
+			localHealth = { ...localHealth, maxParallel: applied };
+		}
+		void refreshLocalHealth();
+	}
 
 	$effect(() => {
 		if ($authState.user && loading) void load();
@@ -78,7 +121,8 @@
 			addToast('Select a compute provider first.', 'error');
 			return;
 		}
-		busy = true;
+		if (isPending(model.id)) return;
+		setPending(model.id, true);
 		try {
 			const result = await launchModelDraft({
 				model,
@@ -98,7 +142,7 @@
 			await markFailed(model);
 			addToast(error instanceof Error ? error.message : 'Model could not launch.', 'error');
 		} finally {
-			busy = false;
+			setPending(model.id, false);
 		}
 	}
 
@@ -109,7 +153,8 @@
 			addToast('Training refresh needs a compute job and provider.', 'error');
 			return;
 		}
-		busy = true;
+		if (isPending(model.id)) return;
+		setPending(model.id, true);
 		try {
 			const result = await refreshTrainingModel(model, job, provider);
 			addToast(`${result.model.name} is ${modelStageLabels[result.model.stage as ModelStage].toLowerCase()}.`, 'success');
@@ -118,7 +163,7 @@
 			await markFailed(model);
 			addToast(error instanceof Error ? error.message : 'Training status could not refresh.', 'error');
 		} finally {
-			busy = false;
+			setPending(model.id, false);
 		}
 	}
 
@@ -231,7 +276,7 @@
 				<p class="eyebrow">Launch</p>
 				<h1>Train model drafts.</h1>
 				<p class="live-status">
-					Live logs refresh every 30s{autoRefreshing ? ' · refreshing' : ''}
+					Live logs refresh every 10s{autoRefreshing ? ' · refreshing' : ''}
 				</p>
 			</div>
 			<div class="launch-controls">
@@ -253,6 +298,53 @@
 				</label>
 			</div>
 		</header>
+
+		{#if localHealth}
+			<div class="gpu-strip">
+				<div class="gpu-head">
+					<span class="gpu-dot" class:busy={(localHealth.running ?? 0) > 0}></span>
+					<span class="gpu-eyebrow">Local compute</span>
+				</div>
+				<div class="gpu-tiles">
+					<div class="gpu-tile">
+						<span class="tile-label">Device</span>
+						<strong>{(localHealth.device ?? '—').toUpperCase()}</strong>
+						{#if localHealth.chip}<small>{localHealth.chip}</small>{/if}
+					</div>
+					{#if localHealth.recommendedMaxMb}
+						<div class="gpu-tile wide">
+							<span class="tile-label">GPU memory</span>
+							<strong>{localGb(localUsedMb)} / {localGb(localHealth.recommendedMaxMb)} GB</strong>
+							<div class="meter" aria-hidden="true"><span style={`width:${localMemPct}%`}></span></div>
+						</div>
+					{/if}
+					<div class="gpu-tile">
+						<span class="tile-label">Jobs</span>
+						<strong>{localHealth.running ?? 0} running</strong>
+						<small>{localHealth.queued ?? 0} queued</small>
+					</div>
+					<div class="gpu-tile">
+						<span class="tile-label">Parallel jobs</span>
+						<select
+							class="parallel-select"
+							value={localHealth.maxParallel ?? 1}
+							onchange={(e) => updateMaxParallel(Number(e.currentTarget.value))}
+							title="How many training jobs may run at once on this machine"
+						>
+							{#each Array.from({ length: localHealth.cap ?? 4 }, (_, i) => i + 1) as n (n)}
+								<option value={n}>{n}</option>
+							{/each}
+						</select>
+					</div>
+					{#if localHealth.torch}
+						<div class="gpu-tile">
+							<span class="tile-label">Torch</span>
+							<strong>{localHealth.torch}</strong>
+						</div>
+					{/if}
+				</div>
+			</div>
+		{/if}
 
 		<section class="models-shell">
 			{#if loading}
@@ -311,9 +403,13 @@
 								</td>
 								<td class="actions">
 									{#if model.stage === 'training'}
-										<button type="button" onclick={() => refresh(model)} disabled={busy}>Refresh</button>
+										<button type="button" onclick={() => refresh(model)} disabled={isPending(model.id)}>
+											{isPending(model.id) ? 'Refreshing…' : 'Refresh'}
+										</button>
 									{:else if canLaunch(model)}
-										<button type="button" class="primary" onclick={() => launch(model)} disabled={busy}>Launch</button>
+										<button type="button" class="primary" onclick={() => launch(model)} disabled={isPending(model.id)}>
+											{isPending(model.id) ? 'Launching…' : 'Launch'}
+										</button>
 									{:else}
 										<button type="button" disabled>Launch</button>
 									{/if}
@@ -371,6 +467,115 @@
 		font-family: var(--font-mono);
 		font-size: 0.72rem;
 		font-weight: 700;
+	}
+
+	/* Local GPU strip — only shown when the local daemon is reachable. */
+	.gpu-strip {
+		display: flex;
+		flex-wrap: wrap;
+		align-items: center;
+		gap: 1rem 1.5rem;
+		border: 1.5px solid var(--text);
+		border-radius: 6px;
+		background: var(--bg-card);
+		box-shadow: 3px 3px 0 var(--text);
+		padding: 0.75rem 1rem;
+	}
+
+	.gpu-head {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.gpu-dot {
+		width: 8px;
+		height: 8px;
+		border-radius: 999px;
+		background: var(--text-muted);
+	}
+
+	.gpu-dot.busy {
+		background: var(--green);
+		box-shadow: 0 0 0 3px rgba(26, 127, 55, 0.18);
+	}
+
+	.gpu-eyebrow {
+		color: var(--text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.66rem;
+		font-weight: 800;
+		letter-spacing: 0.12em;
+		text-transform: uppercase;
+	}
+
+	.gpu-tiles {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.6rem 1.75rem;
+		flex: 1;
+	}
+
+	.gpu-tile {
+		display: grid;
+		gap: 0.15rem;
+		align-content: start;
+		min-width: 0;
+	}
+
+	.gpu-tile.wide {
+		min-width: 170px;
+	}
+
+	.tile-label {
+		color: var(--text-muted);
+		font-family: var(--font-mono);
+		font-size: 0.6rem;
+		font-weight: 800;
+		letter-spacing: 0.1em;
+		text-transform: uppercase;
+	}
+
+	.gpu-tile strong {
+		font-size: 0.92rem;
+		font-weight: 720;
+		font-variant-numeric: tabular-nums;
+	}
+
+	.gpu-tile small {
+		color: var(--text-secondary);
+		font-size: 0.72rem;
+	}
+
+	.parallel-select {
+		margin-top: 0.1rem;
+		width: auto;
+		min-width: 3.4rem;
+		border: 1.5px solid var(--text);
+		border-radius: 4px;
+		background: var(--bg-card);
+		color: var(--text);
+		font: inherit;
+		font-weight: 720;
+		font-variant-numeric: tabular-nums;
+		padding: 0.15rem 0.4rem;
+		cursor: pointer;
+	}
+
+	.meter {
+		margin-top: 0.2rem;
+		height: 6px;
+		border: 1px solid var(--text);
+		border-radius: 999px;
+		background: var(--bg-input);
+		overflow: hidden;
+	}
+
+	.meter span {
+		display: block;
+		height: 100%;
+		background: var(--text);
+		transition: width 0.3s ease;
 	}
 
 	.launch-controls {

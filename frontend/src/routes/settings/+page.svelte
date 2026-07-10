@@ -9,6 +9,7 @@
 		preservedCredentialRef,
 		settingsCredentialInputType
 	} from '$lib/services/settings-credentials';
+	import { localDaemonBaseUrl } from '$lib/services/local-training-service';
 	import type { Schema } from '../../../amplify/data/resource';
 
 	import { SvelteFlow, Background, Controls, type Node, type Edge } from '@xyflow/svelte';
@@ -125,6 +126,17 @@
 				name: 'Lambda Cloud',
 				baseUrl: 'https://cloud.lambdalabs.com/api/v1',
 				notes: 'Stored as a custom provider until Lambda Cloud gets first-class verification.'
+			}
+		},
+		{
+			id: 'local',
+			name: 'Local (this machine)',
+			nodeLabel: 'Add Local',
+			providerType: 'local',
+			logoSrc: '',
+			defaults: {
+				name: 'Local (this machine)',
+				notes: 'Trains on this machine (Apple Silicon / MPS) via the local daemon, auto-started by npm run dev. Leave Base URL blank to use the built-in /local-daemon proxy.'
 			}
 		}
 	];
@@ -522,33 +534,45 @@
 				monthlyBudgetUsd: providerForm.monthlyBudgetUsd ? Number(providerForm.monthlyBudgetUsd) : null,
 				notes: providerForm.notes.trim() || null
 			};
+			// Local runs on this machine via the daemon — there is no cloud
+			// endpoint to verify, so mark it available without a verify round-trip.
+			const isLocal = providerPayload.providerType === 'local';
 			if (drawer.kind === 'provider') {
-				const verified = await verifyProviderConnection(drawer.id, providerPayload);
+				const verified = isLocal ? null : await verifyProviderConnection(drawer.id, providerPayload);
 				await dataClient().models.ComputeProvider.update({
 					id: drawer.id,
 					...payload,
-					apiKeyRef: verified.apiKeyRef ?? providerPayload.apiKeyRef,
-					apiSecretRef: verified.apiSecretRef ?? providerPayload.apiSecretRef,
-					verifiedAt: verified.ok ? verified.verifiedAt ?? new Date().toISOString() : null,
-					lastVerifyError: verified.ok ? null : verified.error ?? 'unknown error'
+					apiKeyRef: verified?.apiKeyRef ?? providerPayload.apiKeyRef,
+					apiSecretRef: verified?.apiSecretRef ?? providerPayload.apiSecretRef,
+					verifiedAt: isLocal
+						? new Date().toISOString()
+						: verified?.ok
+							? verified.verifiedAt ?? new Date().toISOString()
+							: null,
+					lastVerifyError: isLocal ? null : verified?.ok ? null : verified?.error ?? 'unknown error'
 				});
 			} else {
-				const verified = await verifyProviderConnection(null, providerPayload);
+				const verified = isLocal ? null : await verifyProviderConnection(null, providerPayload);
 				const { data } = await dataClient().models.ComputeProvider.create({
 					status: 'available',
 					...payload,
-					apiKeyRef: verified.apiKeyRef ?? providerPayload.apiKeyRef,
-					apiSecretRef: verified.apiSecretRef ?? providerPayload.apiSecretRef,
-					verifiedAt: verified.ok ? verified.verifiedAt ?? new Date().toISOString() : null,
-					lastVerifyError: verified.ok ? null : verified.error ?? 'unknown error'
+					apiKeyRef: verified?.apiKeyRef ?? providerPayload.apiKeyRef,
+					apiSecretRef: verified?.apiSecretRef ?? providerPayload.apiSecretRef,
+					verifiedAt: isLocal
+						? new Date().toISOString()
+						: verified?.ok
+							? verified.verifiedAt ?? new Date().toISOString()
+							: null,
+					lastVerifyError: isLocal ? null : verified?.ok ? null : verified?.error ?? 'unknown error'
 				});
-				if (data?.id && !verified.ok) {
+				if (data?.id && !isLocal && !verified?.ok) {
 					await dataClient().models.ComputeProvider.update({
 						id: data.id,
-						lastVerifyError: verified.error ?? 'unknown error'
+						lastVerifyError: verified?.error ?? 'unknown error'
 					});
 				}
 			}
+			if (isLocal) addToast(`${providerPayload.name} saved`, 'success');
 			await loadProviders();
 			closeDrawer();
 		} catch (e) {
@@ -607,6 +631,10 @@
 		}
 		verifying = true;
 		try {
+			if (providerForm.providerType === 'local') {
+				await testLocalDaemon();
+				return;
+			}
 			await verifyProviderConnection(drawer.kind === 'provider' ? drawer.id : null, providerPayloadFromForm());
 			if (drawer.kind === 'provider') await loadProviders();
 		} catch (e) {
@@ -615,6 +643,23 @@
 			addToast(message, 'error');
 		} finally {
 			verifying = false;
+		}
+	}
+
+	async function testLocalDaemon() {
+		providerCheck = { status: 'checking', message: 'Pinging local daemon...' };
+		try {
+			const base = localDaemonBaseUrl({ baseUrl: providerForm.baseUrl.trim() || null });
+			const resp = await fetch(`${base}/health`);
+			const body = (await resp.json()) as { ok?: boolean; device?: string };
+			if (!resp.ok || !body?.ok) throw new Error('daemon did not report healthy');
+			const message = `Daemon healthy (device: ${body.device ?? 'unknown'})`;
+			providerCheck = { status: 'ok', message };
+			addToast(message, 'success');
+		} catch (e) {
+			const message = `Local daemon unreachable — start it with "npm run dev" (${asMessage(e, 'no response')})`;
+			providerCheck = { status: 'error', message };
+			addToast(message, 'error');
 		}
 	}
 
@@ -921,6 +966,15 @@
 										<span>AWS region</span>
 										<input type="text" bind:value={providerForm.awsRegion} placeholder="e.g. us-east-1" />
 									</label>
+								{:else if providerForm.providerType === 'local'}
+									<p class="field-note">
+										Runs on this machine via the local daemon (auto-started by <code>npm run dev</code>).
+										No credentials or verification needed.
+									</p>
+									<label>
+										<span>Base URL (optional — blank uses the /local-daemon proxy)</span>
+										<input type="text" bind:value={providerForm.baseUrl} placeholder="http://127.0.0.1:8787" />
+									</label>
 								{:else if providerForm.providerType === 'custom'}
 									<label>
 										<span>API key {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : '(optional)'}</span>
@@ -1106,6 +1160,16 @@
 		background: none;
 		font-size: 1rem;
 		padding: 0.25rem 0.4rem;
+	}
+
+	.field-note {
+		margin: 0;
+		font-size: 0.85rem;
+		line-height: 1.4;
+		opacity: 0.75;
+	}
+	.field-note code {
+		font-size: 0.8rem;
 	}
 
 	.connection-check {

@@ -22,6 +22,7 @@ Learning on Large Data", ICML 2025.
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 from typing import Callable, List, Optional
 
@@ -37,6 +38,9 @@ except ImportError:
 
 from models.base import NumeraiModel
 from config.device import resolve_device_str, empty_cache
+
+
+TABICL_ALLOW_MPS_ENV = "NUMERAI_TABICL_ALLOW_MPS"
 
 
 class TabICLModel(NumeraiModel):
@@ -57,6 +61,11 @@ class TabICLModel(NumeraiModel):
         n_recent_eras: int = 48,
         n_estimators_per_bag: int = 16,
         norm_methods: Optional[str] = "all",
+        device: str = "auto",
+        offload_mode: str = "auto",
+        use_amp="auto",
+        use_fa3="auto",
+        batch_size: int = 16,
         **kwargs,
     ):
         if not HAS_TABICL:
@@ -78,9 +87,18 @@ class TabICLModel(NumeraiModel):
         else:
             self.norm_methods = None  # TabICL default ["none", "power"]
 
-        # offload_mode: "gpu" keeps embeddings on GPU (fastest), "cpu" offloads,
-        # "auto" (TabICL default) often picks CPU and kills performance.
-        self.offload_mode = "gpu"
+        requested_device = None if device == "auto" else device
+        self._device = self._resolve_tabicl_device(resolve_device_str(requested_device), device)
+        self.offload_mode = self._resolve_runtime_option(
+            offload_mode, cuda_value="gpu", mps_value="auto", cpu_value="auto",
+        )
+        self.use_amp = self._resolve_runtime_option(
+            use_amp, cuda_value=True, mps_value="auto", cpu_value=False,
+        )
+        self.use_fa3 = self._resolve_runtime_option(
+            use_fa3, cuda_value=True, mps_value=False, cpu_value=False,
+        )
+        self.batch_size = int(batch_size)
 
         self._feature_names: List[str] = []
         self._bags: List[dict] = []
@@ -89,6 +107,25 @@ class TabICLModel(NumeraiModel):
         self._shared_model = None
         self._shared_model_config = None
         self._shared_model_path = None
+
+    @staticmethod
+    def _mps_enabled_for_tabicl() -> bool:
+        return os.environ.get(TABICL_ALLOW_MPS_ENV, "").strip().lower() in {"1", "true", "yes", "on"}
+
+    def _resolve_tabicl_device(self, resolved_device: str, requested_device: str) -> str:
+        """Avoid TabICL on MPS unless explicitly enabled.
+
+        Large TabICL contexts can trigger hard Metal/MPS assertions before
+        Python can catch and recover. CPU is slower, but it keeps local jobs
+        reliable; set NUMERAI_TABICL_ALLOW_MPS=1 to opt into experimental MPS.
+        """
+        if str(resolved_device).startswith("mps") and not self._mps_enabled_for_tabicl():
+            print(
+                f"  [TabICL] MPS is disabled for TabICL stability; using CPU. "
+                f"Set {TABICL_ALLOW_MPS_ENV}=1 to force experimental MPS."
+            )
+            return "cpu"
+        return str(resolved_device)
 
     def fit(
         self,
@@ -118,7 +155,8 @@ class TabICLModel(NumeraiModel):
         print(f"  [TabICL] {len(recent_df):,} rows from {len(recent_eras)} recent eras, "
               f"{n_features} features, {self.n_bags} bags, "
               f"{self.n_estimators_per_bag} estimators/bag, "
-              f"norm={self.norm_methods}, offload={self.offload_mode}")
+              f"norm={self.norm_methods}, device={self._device}, "
+              f"offload={self.offload_mode}, amp={self.use_amp}, fa3={self.use_fa3}")
         if needs_feature_bagging:
             print(f"  [TabICL] Feature bagging: {fpb} features per bag "
                   f"(total {n_features} > limit {self.MAX_FEATURES})")
@@ -199,15 +237,32 @@ class TabICLModel(NumeraiModel):
         """Auto-tune prediction chunk size based on GPU memory."""
         try:
             import torch
-            if torch.cuda.is_available():
+            if str(self._device).startswith("cuda") and torch.cuda.is_available():
                 total_mem = torch.cuda.get_device_properties(0).total_memory
                 if total_mem > 40e9:   # A100-80GB or similar
                     return 20000
                 elif total_mem > 20e9:  # L4-24GB or similar
                     return 10000
+            mps_backend = getattr(torch.backends, "mps", None)
+            if (
+                str(self._device).startswith("mps")
+                and mps_backend is not None
+                and mps_backend.is_available()
+            ):
+                return 2048
         except (ImportError, RuntimeError):
             pass
         return 5000
+
+    def _resolve_runtime_option(self, value, *, cuda_value, mps_value, cpu_value):
+        """Resolve TabICL runtime options while preserving CUDA defaults."""
+        if value != "auto":
+            return value
+        if str(self._device).startswith("cuda"):
+            return cuda_value
+        if str(self._device).startswith("mps"):
+            return mps_value
+        return cpu_value
 
     def _make_regressor(self, bag: dict, device: str) -> "TabICLRegressor":
         """Create a TabICLRegressor, reusing the shared transformer weights."""
@@ -217,9 +272,9 @@ class TabICLModel(NumeraiModel):
             random_state=bag["seed"],
             norm_methods=self.norm_methods,
             offload_mode=self.offload_mode,
-            use_amp=True,
-            use_fa3=True,
-            batch_size=16,
+            use_amp=self.use_amp,
+            use_fa3=self.use_fa3,
+            batch_size=self.batch_size,
         )
 
         if self._shared_model is None:
@@ -253,7 +308,7 @@ class TabICLModel(NumeraiModel):
         if not self._bags:
             raise RuntimeError("Model not trained or loaded")
 
-        device = resolve_device_str()
+        device = self._device
         pred_chunk_size = self._get_pred_chunk_size()
         all_preds = np.zeros(len(df), dtype=np.float64)
 
@@ -302,6 +357,10 @@ class TabICLModel(NumeraiModel):
             "n_estimators_per_bag": self.n_estimators_per_bag,
             "norm_methods": self.norm_methods,
             "offload_mode": self.offload_mode,
+            "device": self._device,
+            "use_amp": self.use_amp,
+            "use_fa3": self.use_fa3,
+            "batch_size": self.batch_size,
             "feature_names": self._feature_names,
             "bag_seeds": [b["seed"] for b in self._bags],
         }
@@ -321,6 +380,9 @@ class TabICLModel(NumeraiModel):
         self.n_estimators_per_bag = meta.get("n_estimators_per_bag", self.n_estimators_per_bag)
         self.norm_methods = meta.get("norm_methods", self.norm_methods)
         self.offload_mode = meta.get("offload_mode", self.offload_mode)
+        self.use_amp = meta.get("use_amp", self.use_amp)
+        self.use_fa3 = meta.get("use_fa3", self.use_fa3)
+        self.batch_size = meta.get("batch_size", self.batch_size)
         seeds = meta.get("bag_seeds", [])
 
         self._bags = []
