@@ -16,7 +16,13 @@ import {
 	type AuthSession,
 } from 'aws-amplify/auth';
 import { writable } from 'svelte/store';
-import outputs from '../../amplify_outputs.json';
+
+type AmplifyOutputsModule = { default: unknown };
+
+const outputModules = import.meta.glob<AmplifyOutputsModule>('../../amplify_outputs.json', {
+	eager: true
+});
+const outputs = outputModules['../../amplify_outputs.json']?.default;
 
 const envUserPoolId = import.meta.env.VITE_COGNITO_USER_POOL_ID as string | undefined;
 const envUserPoolClientId = import.meta.env.VITE_COGNITO_USER_POOL_CLIENT_ID as string | undefined;

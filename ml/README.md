@@ -61,6 +61,26 @@ cp .env.example .env
 # edit ML_NUMERAI_PUBLIC_ID and ML_NUMERAI_SECRET_KEY if uploading
 ```
 
+### Provider configuration
+
+Provider-backed scripts intentionally have no operator infrastructure defaults. Copy
+`.env.example` and set the values for the account running the workload:
+
+| Variable | Used by | Purpose |
+| --- | --- | --- |
+| `ML_S3_BUCKET` | Local, SageMaker, Modal | Artifact and progress bucket. |
+| `AWS_REGION` | SageMaker and ECR | AWS region for provider resources. |
+| `SAGEMAKER_ROLE_ARN` | SageMaker | Execution role assumed by training jobs. |
+| `SAGEMAKER_TRAINING_IMAGE` | SageMaker | Full container image URI for training. |
+| `AWS_PROFILE` | Optional CLI output | Local AWS CLI profile name. |
+| `MODAL_APP_NAME` | Modal | Modal application name; defaults to `numerai-dashboard-ml`. |
+| `ML_JOB_PREFIX` | Provider runners | Job-name prefix; defaults to `numerai-dashboard`. |
+| `AWS_ACCOUNT_ID` | ECR build script | Target account for the image registry. |
+| `ECR_REPOSITORY` | ECR build script | Repository name for the training image. |
+
+The scripts fail with a configuration error before contacting a provider when a required
+bucket, role, region, or image is missing.
+
 ## Current Boundary
 
 ```mermaid

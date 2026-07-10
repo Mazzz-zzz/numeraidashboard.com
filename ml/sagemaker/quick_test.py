@@ -6,6 +6,8 @@ train/val internally. Should finish in ~5-10 minutes on L4.
 Usage: modal run sagemaker/quick_test.py
 """
 from __future__ import annotations
+import os
+
 import modal
 
 app = modal.App("tabicl-quick-test")
@@ -30,7 +32,7 @@ hf_secret = modal.Secret.from_name("huggingface-credentials")
 
 
 @app.function(image=ml_image, gpu="L4", timeout=1800, secrets=[aws_secret, hf_secret])
-def run_ab_test():
+def run_ab_test(s3_bucket: str):
     import json
     import os
     import tarfile
@@ -48,7 +50,7 @@ def run_ab_test():
     s3 = boto3.client("s3")
     work_dir = tempfile.mkdtemp(prefix="ml_")
     tar_path = os.path.join(work_dir, "source.tar.gz")
-    s3.download_file("openoptions-ml", "code/ml-source.tar.gz", tar_path)
+    s3.download_file(s3_bucket, "code/ml-source.tar.gz", tar_path)
     with tarfile.open(tar_path, "r:gz") as tar:
         tar.extractall(work_dir)
     os.unlink(tar_path)
@@ -149,7 +151,17 @@ def run_ab_test():
 
 
 @app.local_entrypoint()
-def main():
+def main(s3_bucket: str = ""):
     import json as _json
-    results = run_ab_test.remote()
+
+    resolved_bucket = (
+        s3_bucket
+        or os.environ.get("ML_S3_BUCKET")
+        or os.environ.get("ML_ARTIFACT_BUCKET")
+        or ""
+    ).strip()
+    if not resolved_bucket:
+        raise ValueError("Pass --s3-bucket or set ML_S3_BUCKET")
+
+    results = run_ab_test.remote(resolved_bucket)
     print("\nFinal results:", _json.dumps(results, indent=2))

@@ -19,7 +19,7 @@ import os
 import time
 from pathlib import Path
 
-from launch_job import S3_BUCKET, launch
+from launch_job import format_aws_cli_options, launch, load_sagemaker_config
 
 # ── Experiment definitions ──────────────────────────────────────────────
 # Each entry: (name, feature_set, extra_hyperparams)
@@ -132,6 +132,12 @@ def main():
 
     print(f"{'DRY RUN — ' if args.dry_run else ''}Launching {len(experiments)} experiments\n")
 
+    config = None if args.dry_run else load_sagemaker_config()
+    job_prefix = (
+        config.job_prefix
+        if config
+        else os.environ.get("ML_JOB_PREFIX", "numerai-dashboard")
+    )
     launched = []
     for name, feature_set, extra in experiments:
         instance = args.instance or INSTANCE_MAP.get(feature_set, "ml.m5.xlarge")
@@ -140,7 +146,7 @@ def main():
             print(f"    overrides: {extra}")
 
         if args.dry_run:
-            launched.append(f"oo-numerai-{name}-DRYRUN")
+            launched.append(f"{job_prefix}-{name}-DRYRUN")
             continue
 
         job_name = launch(
@@ -148,6 +154,7 @@ def main():
             instance_type=instance,
             experiment_name=name,
             extra_hyperparams=extra,
+            config=config,
         )
         launched.append(job_name)
         # Small delay to avoid API throttling
@@ -157,10 +164,14 @@ def main():
     print(f"Launched {len(launched)} jobs:")
     for jn in launched:
         print(f"  {jn}")
-    print(f"\nMonitor all:")
-    print(f"  aws sagemaker list-training-jobs --name-contains oo-numerai "
-          f"--region ap-southeast-2 --profile cybergarden-dev --sort-by CreationTime")
-    print(f"\nResults land in: s3://{S3_BUCKET}/jobs/<job-name>/metrics.json")
+    if config:
+        print(f"\nMonitor all:")
+        print(
+            "  aws sagemaker list-training-jobs "
+            f"--name-contains {config.job_prefix} {format_aws_cli_options(config)} "
+            "--sort-by CreationTime"
+        )
+        print(f"\nResults land in: s3://{config.s3_bucket}/jobs/<job-name>/metrics.json")
 
 
 if __name__ == "__main__":

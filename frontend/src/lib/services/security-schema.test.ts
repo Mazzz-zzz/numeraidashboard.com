@@ -7,6 +7,7 @@ const backendSource = readFileSync(resolve(process.cwd(), 'amplify/backend.ts'),
 const modalSource = readFileSync(resolve(process.cwd(), 'amplify/functions/modal.ts'), 'utf8');
 const appHtmlSource = readFileSync(resolve(process.cwd(), 'src/app.html'), 'utf8');
 const layoutSource = readFileSync(resolve(process.cwd(), 'src/routes/+layout.svelte'), 'utf8');
+const authSource = readFileSync(resolve(process.cwd(), 'src/lib/auth.ts'), 'utf8');
 
 function modelBlock(modelName: string): string {
 	const marker = `\t${modelName}: a`;
@@ -65,8 +66,8 @@ describe('credential schema hardening', () => {
 	it('keeps operator Modal infrastructure out of source defaults', () => {
 		expect(modalSource).toContain('process.env.MODAL_APP_HOST');
 		expect(modalSource).toContain('process.env.ML_ARTIFACT_BUCKET');
-		expect(modalSource).not.toContain('almaz--openoptions-ml');
-		expect(modalSource).not.toContain("DEFAULT_S3_BUCKET = 'openoptions-ml'");
+		expect(modalSource).not.toContain('DEFAULT_APP_HOST');
+		expect(modalSource).not.toContain('DEFAULT_S3_BUCKET');
 
 		for (const resourcePath of [
 			'amplify/functions/start-training/resource.ts',
@@ -81,7 +82,12 @@ describe('credential schema hardening', () => {
 
 	it('loads optional analytics from public build configuration', () => {
 		expect(appHtmlSource).not.toContain('googletagmanager.com');
-		expect(appHtmlSource).not.toContain('G-CWPVV1HBES');
+		expect(appHtmlSource).not.toContain("gtag('config'");
 		expect(layoutSource).toContain('VITE_GA_MEASUREMENT_ID');
+	});
+
+	it('allows clean clones to build without generated Amplify outputs', () => {
+		expect(authSource).toContain("import.meta.glob<AmplifyOutputsModule>('../../amplify_outputs.json'");
+		expect(authSource).not.toContain("import outputs from '../../amplify_outputs.json'");
 	});
 });

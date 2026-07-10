@@ -3,26 +3,30 @@
 # Usage: ./build_and_push.sh [tag]
 set -euo pipefail
 
-ACCOUNT_ID="017915195458"
-REGION="ap-southeast-2"
-REPO="openoptions-ml-training"
+AWS_REGION="${AWS_REGION:-${AWS_DEFAULT_REGION:-}}"
+ECR_REPOSITORY="${ECR_REPOSITORY:-numerai-dashboard-ml-training}"
 TAG="${1:-latest}"
-IMAGE="${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com/${REPO}:${TAG}"
+
+: "${AWS_ACCOUNT_ID:?Set AWS_ACCOUNT_ID to the target AWS account ID}"
+: "${AWS_REGION:?Set AWS_REGION or AWS_DEFAULT_REGION}"
+
+REGISTRY="${AWS_ACCOUNT_ID}.dkr.ecr.${AWS_REGION}.amazonaws.com"
+IMAGE="${REGISTRY}/${ECR_REPOSITORY}:${TAG}"
 
 # Ensure ECR repo exists
-aws ecr describe-repositories --repository-names "${REPO}" --region "${REGION}" 2>/dev/null || \
-    aws ecr create-repository --repository-name "${REPO}" --region "${REGION}"
+aws ecr describe-repositories --repository-names "${ECR_REPOSITORY}" --region "${AWS_REGION}" 2>/dev/null || \
+    aws ecr create-repository --repository-name "${ECR_REPOSITORY}" --region "${AWS_REGION}"
 
 # Login to ECR
-aws ecr get-login-password --region "${REGION}" | \
-    docker login --username AWS --password-stdin "${ACCOUNT_ID}.dkr.ecr.${REGION}.amazonaws.com"
+aws ecr get-login-password --region "${AWS_REGION}" | \
+    docker login --username AWS --password-stdin "${REGISTRY}"
 
 # Build from ml/ directory
 cd "$(dirname "$0")/.."
-docker build -t "${REPO}:${TAG}" -f sagemaker/Dockerfile .
+docker build -t "${ECR_REPOSITORY}:${TAG}" -f sagemaker/Dockerfile .
 
 # Tag and push
-docker tag "${REPO}:${TAG}" "${IMAGE}"
+docker tag "${ECR_REPOSITORY}:${TAG}" "${IMAGE}"
 docker push "${IMAGE}"
 
 echo "Pushed: ${IMAGE}"

@@ -241,6 +241,11 @@ class TestWeakTargetFiltering:
 
 
 class TestDefaultSettings:
+    def test_s3_bucket_has_no_operator_default(self, monkeypatch):
+        monkeypatch.delenv("ML_S3_BUCKET", raising=False)
+        settings = MlSettings()
+        assert settings.s3_bucket == ""
+
     def test_neutralization_default_is_025(self):
         settings = MlSettings()
         assert settings.neutralization_proportion == 0.25

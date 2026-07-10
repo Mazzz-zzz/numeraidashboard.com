@@ -50,6 +50,8 @@ def _install_fake_modal(monkeypatch):
 
 @pytest.fixture
 def modal_runner(monkeypatch):
+    for name in ("ML_S3_BUCKET", "ML_ARTIFACT_BUCKET", "MODAL_APP_NAME"):
+        monkeypatch.delenv(name, raising=False)
     _install_fake_modal(monkeypatch)
     sys.modules.pop("sagemaker.modal_runner", None)
     return importlib.import_module("sagemaker.modal_runner")
@@ -74,3 +76,22 @@ def test_validate_hyperparams_allows_target_cols_arrays(modal_runner):
     assert modal_runner._validate_hyperparams({"target_cols": ["target_ender_20"]}) == {
         "target_cols": ["target_ender_20"]
     }
+
+
+def test_modal_app_uses_generic_default_name(modal_runner):
+    assert modal_runner.MODAL_APP_NAME == "numerai-dashboard-ml"
+
+
+def test_resolve_s3_bucket_prefers_explicit_value(monkeypatch, modal_runner):
+    monkeypatch.setenv("ML_S3_BUCKET", "environment-bucket")
+    assert modal_runner._resolve_s3_bucket("request-bucket") == "request-bucket"
+
+
+def test_resolve_s3_bucket_reads_environment(monkeypatch, modal_runner):
+    monkeypatch.setenv("ML_S3_BUCKET", "environment-bucket")
+    assert modal_runner._resolve_s3_bucket() == "environment-bucket"
+
+
+def test_resolve_s3_bucket_requires_configuration(modal_runner):
+    with pytest.raises(ValueError, match="s3_bucket is required"):
+        modal_runner._resolve_s3_bucket()

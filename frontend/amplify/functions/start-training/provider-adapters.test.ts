@@ -141,7 +141,7 @@ describe('training provider adapters', () => {
 			providerType: 'modal',
 			apiKey: 'ak-test',
 			apiSecret: 'as-test',
-			baseUrl: 'https://almaz--openoptions-ml-spawn-training.modal.run',
+			baseUrl: 'https://operator--numerai-worker-spawn-training.modal.run',
 			providerConfigJson: { modal: { gpuType: 't4', s3Bucket: 'test-artifacts' } },
 			checkedAt,
 		});
@@ -171,7 +171,7 @@ describe('training provider adapters', () => {
 			apiSecret: 'as-test',
 			providerConfigJson: {
 				modal: {
-					launchUrl: 'https://almaz--openoptions-ml-spawn-training.modal.run',
+					launchUrl: 'https://operator--numerai-worker-spawn-training.modal.run',
 					s3Bucket: 'test-artifacts',
 					gpuType: 't4',
 				},
@@ -182,17 +182,17 @@ describe('training provider adapters', () => {
 		expect(result).toMatchObject({ ok: true, providerJobId: 'modal-job-456' });
 		expect(fetchSpy).toHaveBeenNthCalledWith(
 			1,
-			'https://almaz--openoptions-ml-job-status.modal.run',
+			'https://operator--numerai-worker-job-status.modal.run',
 			expect.objectContaining({ method: 'POST' })
 		);
 		expect(fetchSpy).toHaveBeenNthCalledWith(
 			2,
-			'https://almaz--openoptions-ml-job-cancel.modal.run',
+			'https://operator--numerai-worker-job-cancel.modal.run',
 			expect.objectContaining({ method: 'POST' })
 		);
 		expect(fetchSpy).toHaveBeenNthCalledWith(
 			3,
-			'https://almaz--openoptions-ml-spawn-training.modal.run',
+			'https://operator--numerai-worker-spawn-training.modal.run',
 			expect.objectContaining({ method: 'POST' })
 		);
 		fetchSpy.mockRestore();

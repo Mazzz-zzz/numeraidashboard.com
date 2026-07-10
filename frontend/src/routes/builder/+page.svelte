@@ -190,7 +190,7 @@
 			<section class="panel params-panel">
 				<div class="panel-head">
 					<h2>Params</h2>
-					<span>OpenOptions</span>
+					<span>Training config</span>
 				</div>
 				<div class="form-grid three">
 					<label>

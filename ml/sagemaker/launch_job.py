@@ -18,26 +18,78 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
+import shlex
 import tarfile
 import tempfile
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
 import boto3
 
-REGION = "ap-southeast-2"
-ACCOUNT_ID = "017915195458"
-ROLE_ARN = f"arn:aws:iam::{ACCOUNT_ID}:role/openoptions-sagemaker-execution"
-S3_BUCKET = "openoptions-ml"
 
-# SageMaker sklearn framework image for ap-southeast-2
-# This has Python 3.10, pandas, numpy, scipy, scikit-learn pre-installed
-# We add lightgbm + numerapi via the bootstrap script
-SKLEARN_IMAGE = "783357654285.dkr.ecr.ap-southeast-2.amazonaws.com/sagemaker-scikit-learn:1.2-1-cpu-py3"
+@dataclass(frozen=True)
+class SageMakerConfig:
+    region: str
+    role_arn: str
+    s3_bucket: str
+    training_image: str
+    aws_profile: str | None
+    job_prefix: str
 
 
-def _package_source(ml_dir: Path) -> str:
+def _environment_value(*names: str) -> str | None:
+    for name in names:
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value
+    return None
+
+
+def load_sagemaker_config() -> SageMakerConfig:
+    """Load operator-owned infrastructure without source-level fallbacks."""
+    values = {
+        "region": _environment_value("AWS_REGION", "AWS_DEFAULT_REGION"),
+        "role_arn": _environment_value("SAGEMAKER_ROLE_ARN"),
+        "s3_bucket": _environment_value("ML_S3_BUCKET", "ML_ARTIFACT_BUCKET"),
+        "training_image": _environment_value("SAGEMAKER_TRAINING_IMAGE"),
+    }
+    missing = [name for name, value in values.items() if not value]
+    if missing:
+        required_names = {
+            "region": "AWS_REGION",
+            "role_arn": "SAGEMAKER_ROLE_ARN",
+            "s3_bucket": "ML_S3_BUCKET",
+            "training_image": "SAGEMAKER_TRAINING_IMAGE",
+        }
+        missing_env = ", ".join(required_names[name] for name in missing)
+        raise RuntimeError(f"Missing SageMaker configuration: {missing_env}")
+
+    job_prefix = _environment_value("ML_JOB_PREFIX") or "numerai-dashboard"
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?", job_prefix):
+        raise RuntimeError("ML_JOB_PREFIX must contain only letters, numbers, and hyphens")
+
+    return SageMakerConfig(
+        region=values["region"],
+        role_arn=values["role_arn"],
+        s3_bucket=values["s3_bucket"],
+        training_image=values["training_image"],
+        aws_profile=_environment_value("AWS_PROFILE"),
+        job_prefix=job_prefix,
+    )
+
+
+def format_aws_cli_options(config: SageMakerConfig) -> str:
+    options = ["--region", shlex.quote(config.region)]
+    if config.aws_profile:
+        options.extend(["--profile", shlex.quote(config.aws_profile)])
+    return " ".join(options)
+
+
+def _package_source(ml_dir: Path, config: SageMakerConfig | None = None) -> str:
     """Package ml/ code (including bootstrap.py) into a tarball and upload to S3."""
+    config = config or load_sagemaker_config()
     with tempfile.NamedTemporaryFile(suffix=".tar.gz", delete=False) as f:
         tmp_path = f.name
 
@@ -47,12 +99,12 @@ def _package_source(ml_dir: Path) -> str:
                 continue
             tar.add(item, arcname=item.name)
 
-    s3 = boto3.client("s3", region_name=REGION)
+    s3 = boto3.client("s3", region_name=config.region)
     s3_key = "code/ml-source.tar.gz"
-    s3.upload_file(tmp_path, S3_BUCKET, s3_key)
+    s3.upload_file(tmp_path, config.s3_bucket, s3_key)
     os.unlink(tmp_path)
 
-    return f"s3://{S3_BUCKET}/{s3_key}"
+    return f"s3://{config.s3_bucket}/{s3_key}"
 
 
 def launch(
@@ -61,6 +113,7 @@ def launch(
     upload: bool = False,
     experiment_name: str | None = None,
     extra_hyperparams: dict | None = None,
+    config: SageMakerConfig | None = None,
 ):
     """Launch a SageMaker training job.
 
@@ -76,19 +129,23 @@ def launch(
               early_stopping_rounds, max_train_eras, multi_target_enabled,
               enable_era_stats, enable_group_aggregates.
     """
+    config = config or load_sagemaker_config()
     ml_dir = Path(__file__).parent.parent
 
     print("Packaging source code...")
-    source_uri = _package_source(ml_dir)
+    source_uri = _package_source(ml_dir, config)
     print(f"  Uploaded to {source_uri}")
 
     ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-    tag = (experiment_name or feature_set).replace(".", "-").replace("_", "-")
-    job_name = f"oo-numerai-{tag}-{ts}"
+    tag = (
+        re.sub(r"[^A-Za-z0-9-]+", "-", experiment_name or feature_set).strip("-")
+        or "run"
+    )
+    job_name = f"{config.job_prefix}-{tag}-{ts}"[:63].rstrip("-")
 
     hyperparams = {
         "feature_set": feature_set,
-        "s3_bucket": S3_BUCKET,
+        "s3_bucket": config.s3_bucket,
         "job_name": job_name,
     }
 
@@ -102,23 +159,23 @@ def launch(
     sm_hyperparams = {
         **hyperparams,
         "sagemaker_program": "bootstrap.py",
-        "sagemaker_submit_directory": f"s3://{S3_BUCKET}/code/ml-source.tar.gz",
+        "sagemaker_submit_directory": f"s3://{config.s3_bucket}/code/ml-source.tar.gz",
     }
 
-    sm = boto3.client("sagemaker", region_name=REGION)
+    sm = boto3.client("sagemaker", region_name=config.region)
 
     print(f"Creating training job: {job_name}")
     print(f"  Instance: {instance_type}")
     print(f"  Feature set: {feature_set}")
-    print(f"  Image: {SKLEARN_IMAGE}")
+    print(f"  Image: {config.training_image}")
 
     sm.create_training_job(
         TrainingJobName=job_name,
         AlgorithmSpecification={
-            "TrainingImage": SKLEARN_IMAGE,
+            "TrainingImage": config.training_image,
             "TrainingInputMode": "File",
         },
-        RoleArn=ROLE_ARN,
+        RoleArn=config.role_arn,
         HyperParameters=sm_hyperparams,
         InputDataConfig=[
             {
@@ -135,7 +192,7 @@ def launch(
             }
         ],
         OutputDataConfig={
-            "S3OutputPath": f"s3://{S3_BUCKET}/jobs/{job_name}/output",
+            "S3OutputPath": f"s3://{config.s3_bucket}/jobs/{job_name}/output",
         },
         ResourceConfig={
             "InstanceType": instance_type,
@@ -152,10 +209,17 @@ def launch(
     )
 
     print(f"\nJob launched: {job_name}")
+    cli_options = format_aws_cli_options(config)
     print(f"Monitor:")
-    print(f"  aws sagemaker describe-training-job --training-job-name {job_name} --region {REGION} --profile cybergarden-dev")
+    print(
+        "  aws sagemaker describe-training-job "
+        f"--training-job-name {job_name} {cli_options}"
+    )
     print(f"Logs:")
-    print(f"  aws logs tail /aws/sagemaker/TrainingJobs --log-stream-name-prefix {job_name} --region {REGION} --profile cybergarden-dev --follow")
+    print(
+        "  aws logs tail /aws/sagemaker/TrainingJobs "
+        f"--log-stream-name-prefix {job_name} {cli_options} --follow"
+    )
 
     return job_name
 

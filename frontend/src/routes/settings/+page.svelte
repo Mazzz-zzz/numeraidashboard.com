@@ -111,7 +111,7 @@
 			logoSrc: '/provider-logos/aws.png',
 			defaults: {
 				name: 'AWS SageMaker',
-				awsRegion: 'ap-southeast-2',
+				awsRegion: '',
 				notes: 'Paste an execution role ARN with SageMaker training permissions.'
 			}
 		},
@@ -919,7 +919,7 @@
 									</label>
 									<label>
 										<span>AWS region</span>
-										<input type="text" bind:value={providerForm.awsRegion} placeholder="ap-southeast-2" />
+										<input type="text" bind:value={providerForm.awsRegion} placeholder="e.g. us-east-1" />
 									</label>
 								{:else if providerForm.providerType === 'custom'}
 									<label>

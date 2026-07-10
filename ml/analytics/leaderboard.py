@@ -1,6 +1,6 @@
 """Local leaderboard: fetch live perf for every codenamed model and rank.
 
-Run from the OpenOptions repo root:
+Run from the repository root:
     python3 -m ml.analytics.leaderboard
     python3 -m ml.analytics.leaderboard --metric mmc60
     python3 -m ml.analytics.leaderboard --json

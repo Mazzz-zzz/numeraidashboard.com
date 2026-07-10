@@ -37,8 +37,23 @@ import boto3
 # Add ml/ to path for imports
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-S3_BUCKET = "openoptions-ml"
-REGION = "ap-southeast-2"
+DEFAULT_JOB_PREFIX = "numerai-dashboard"
+
+
+def _resolve_s3_bucket(explicit: str | None = None) -> str:
+    bucket = (
+        explicit
+        or os.environ.get("ML_S3_BUCKET")
+        or os.environ.get("ML_ARTIFACT_BUCKET")
+        or ""
+    ).strip()
+    if not bucket:
+        raise ValueError("S3 artifact bucket is required: pass --s3-bucket or set ML_S3_BUCKET")
+    return bucket
+
+
+def _aws_region() -> str | None:
+    return os.environ.get("AWS_REGION") or os.environ.get("AWS_DEFAULT_REGION")
 
 # HP_TO_ENV mapping (same as bootstrap.py / modal_runner.py)
 HP_TO_ENV = {
@@ -134,14 +149,15 @@ def run_local(
     gpu_type: str = "gpu",
     upload: bool = False,
     output_dir: str = "./output",
-    s3_bucket: str = S3_BUCKET,
+    s3_bucket: str | None = None,
     job_name: str | None = None,
     extra_hyperparams: dict | None = None,
     api_url: str | None = None,
     experiment_name: str | None = None,
 ):
     """Run training locally, writing progress to S3 for the pipeline."""
-    s3 = boto3.client("s3", region_name=REGION)
+    s3_bucket = _resolve_s3_bucket(s3_bucket)
+    s3 = boto3.client("s3", region_name=_aws_region())
     start_time = time.time()
 
     # Generate job name
@@ -149,7 +165,11 @@ def run_local(
     if not job_name:
         safe_name = experiment_name or f"{model_type}-{feature_set}"
         safe_name = safe_name.replace(".", "-").replace("_", "-")[:40]
-        job_name = f"oo-local-{safe_name}-{ts}"
+        job_prefix = (
+            os.environ.get("ML_JOB_PREFIX", DEFAULT_JOB_PREFIX).strip()
+            or DEFAULT_JOB_PREFIX
+        )
+        job_name = f"{job_prefix}-local-{safe_name}-{ts}"
 
     hyperparams = extra_hyperparams or {}
 
@@ -297,7 +317,11 @@ if __name__ == "__main__":
     parser.add_argument("--output", default="./output")
     parser.add_argument("--upload", action="store_true",
                         help="Upload submission to Numerai after training")
-    parser.add_argument("--s3-bucket", default=S3_BUCKET)
+    parser.add_argument(
+        "--s3-bucket",
+        default=None,
+        help="S3 artifact bucket (defaults to ML_S3_BUCKET)",
+    )
     parser.add_argument("--job-name", default=None,
                         help="Override job name (auto-generated if omitted)")
     parser.add_argument("--api-url", default=None,

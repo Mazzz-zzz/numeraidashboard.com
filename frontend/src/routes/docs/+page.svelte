@@ -242,7 +242,7 @@
 					<ul>
 						<li>Placeholder provider used for UI workflow testing.</li>
 						<li>Does not prove this host has a GPU.</li>
-						<li>On this EC2 host, <code>t4g.large</code> has no local NVIDIA GPU.</li>
+						<li>CPU-only instances such as <code>t4g.large</code> do not expose an NVIDIA GPU.</li>
 					</ul>
 				</div>
 			</div>
@@ -264,7 +264,7 @@
 			<h2>Current product map.</h2>
 			<div class="route-grid">
 				<div><strong>/</strong><span>Dashboard summary.</span></div>
-				<div><strong>/builder</strong><span>Create model drafts from OpenOptions-style params.</span></div>
+				<div><strong>/builder</strong><span>Create model drafts from explicit training parameters.</span></div>
 				<div><strong>/models</strong><span>Canonical model registry, lineage, and submit views.</span></div>
 				<div><strong>/launch</strong><span>Start provider training for draft models.</span></div>
 				<div><strong>/settings</strong><span>Numerai and compute provider setup.</span></div>

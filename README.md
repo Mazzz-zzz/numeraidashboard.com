@@ -164,7 +164,9 @@ python -m training.trainer --feature-set small --output ./output
 Numerai credentials are only required for upload paths. Dataset caches, model artifacts,
 checkpoints, and local environment files are ignored by Git. Optional neural and foundation
 models require the additional packages documented in `ml/requirements.txt` and
-[`ml/README.md`](ml/README.md).
+[`ml/README.md`](ml/README.md). Provider runners take account-owned infrastructure from
+[`ml/.env.example`](ml/.env.example); no bucket, role, registry, or cloud profile is embedded
+in source defaults.
 
 ## Validation
 

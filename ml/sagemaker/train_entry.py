@@ -54,7 +54,16 @@ def main():
     try:
         hp = _load_hyperparams()
         feature_set = hp.get("feature_set", "medium")
-        s3_bucket = hp.get("s3_bucket", "openoptions-ml")
+        s3_bucket = (
+            hp.get("s3_bucket")
+            or os.environ.get("ML_S3_BUCKET")
+            or os.environ.get("ML_ARTIFACT_BUCKET")
+            or ""
+        ).strip()
+        if not s3_bucket:
+            raise ValueError(
+                "S3 artifact bucket is required: pass the s3_bucket hyperparameter or set ML_S3_BUCKET"
+            )
         job_name = hp.get("job_name", "unknown")
 
         print(f"Starting training: feature_set={feature_set}, job_name={job_name}")

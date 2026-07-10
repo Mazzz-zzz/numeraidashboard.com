@@ -31,7 +31,16 @@ with open(hp_path) as f:
 
 mode = hp.get("mode", "train")  # "train" or "inference"
 feature_set = hp.get("feature_set", "small")
-s3_bucket = hp.get("s3_bucket", "openoptions-ml")
+s3_bucket = (
+    hp.get("s3_bucket")
+    or os.environ.get("ML_S3_BUCKET")
+    or os.environ.get("ML_ARTIFACT_BUCKET")
+    or ""
+).strip()
+if not s3_bucket:
+    raise ValueError(
+        "S3 artifact bucket is required: pass the s3_bucket hyperparameter or set ML_S3_BUCKET"
+    )
 job_name = hp.get("job_name", "unknown")
 upload = hp.get("upload", "false").lower() == "true"
 model_type = hp.get("model_type", "lgbm")

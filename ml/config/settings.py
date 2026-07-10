@@ -13,8 +13,8 @@ class MlSettings(BaseSettings):
     numerai_secret_key: str = ""
     numerai_model_id: str = ""
 
-    # S3 storage for models and data
-    s3_bucket: str = "openoptions-ml"
+    # S3 storage for models and data. Provider-backed jobs require an explicit bucket.
+    s3_bucket: str = ""
     s3_prefix: str = "numerai/"
 
     # LightGBM training defaults — production settings

@@ -12,6 +12,8 @@ Usage:
 
 from __future__ import annotations
 
+import os
+
 import modal
 
 # ── Modal App Definition ──────────────────────────────────────────────────
@@ -25,7 +27,13 @@ GPU_MAP = {
     "h100": "H100",
 }
 
-app = modal.App("openoptions-ml")
+DEFAULT_MODAL_APP_NAME = "numerai-dashboard-ml"
+MODAL_APP_NAME = (
+    os.environ.get("MODAL_APP_NAME", DEFAULT_MODAL_APP_NAME).strip()
+    or DEFAULT_MODAL_APP_NAME
+)
+
+app = modal.App(MODAL_APP_NAME)
 
 # Base image with all ML dependencies pre-installed
 ml_image = (
@@ -41,10 +49,12 @@ ml_image = (
 
 # Modal secrets
 aws_secret = modal.Secret.from_name(
-    "aws-credentials",
+    os.environ.get("MODAL_AWS_SECRET_NAME", "aws-credentials"),
     required_keys=["AWS_ACCESS_KEY_ID", "AWS_SECRET_ACCESS_KEY", "AWS_DEFAULT_REGION"],
 )
-hf_secret = modal.Secret.from_name("huggingface-credentials")
+hf_secret = modal.Secret.from_name(
+    os.environ.get("MODAL_HF_SECRET_NAME", "huggingface-credentials")
+)
 
 HP_TO_ENV = {
     "num_rounds": "ML_DEFAULT_NUM_ROUNDS",
@@ -69,6 +79,18 @@ HP_TO_ENV = {
     "enable_era_stats": "ML_ENABLE_ERA_STATS",
     "enable_group_aggregates": "ML_ENABLE_GROUP_AGGREGATES",
 }
+
+
+def _resolve_s3_bucket(explicit: str | None = None) -> str:
+    bucket = (
+        explicit
+        or os.environ.get("ML_S3_BUCKET")
+        or os.environ.get("ML_ARTIFACT_BUCKET")
+        or ""
+    ).strip()
+    if not bucket:
+        raise ValueError("s3_bucket is required or ML_S3_BUCKET must be set")
+    return bucket
 
 
 def _validate_hyperparams(hyperparams: dict) -> dict:
@@ -108,7 +130,7 @@ def _run_training_impl(
     source_tarball_s3: str,
     hyperparams: dict,
     job_name: str,
-    s3_bucket: str = "openoptions-ml",
+    s3_bucket: str | None = None,
 ):
     """Shared training logic for all GPU tiers."""
     import json
@@ -119,6 +141,7 @@ def _run_training_impl(
 
     import boto3
 
+    s3_bucket = _resolve_s3_bucket(s3_bucket)
     start_time = time.time()
     s3 = boto3.client("s3")
 
@@ -264,32 +287,62 @@ def _run_training_inner(
 
 # One function per GPU tier — Modal requires gpu to be static in the decorator
 @app.function(image=ml_image, gpu="T4", timeout=86400, retries=0, secrets=[aws_secret, hf_secret])
-def run_training_job_t4(source_tarball_s3: str, hyperparams: dict, job_name: str, s3_bucket: str = "openoptions-ml"):
+def run_training_job_t4(
+    source_tarball_s3: str,
+    hyperparams: dict,
+    job_name: str,
+    s3_bucket: str | None = None,
+):
     return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
 
 
 @app.function(image=ml_image, gpu="A10G", timeout=86400, retries=0, secrets=[aws_secret, hf_secret])
-def run_training_job(source_tarball_s3: str, hyperparams: dict, job_name: str, s3_bucket: str = "openoptions-ml"):
+def run_training_job(
+    source_tarball_s3: str,
+    hyperparams: dict,
+    job_name: str,
+    s3_bucket: str | None = None,
+):
     return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
 
 
 @app.function(image=ml_image, gpu="L4", timeout=86400, retries=0, secrets=[aws_secret, hf_secret])
-def run_training_job_l4(source_tarball_s3: str, hyperparams: dict, job_name: str, s3_bucket: str = "openoptions-ml"):
+def run_training_job_l4(
+    source_tarball_s3: str,
+    hyperparams: dict,
+    job_name: str,
+    s3_bucket: str | None = None,
+):
     return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
 
 
 @app.function(image=ml_image, gpu="A100-40GB", timeout=86400, retries=0, secrets=[aws_secret, hf_secret])
-def run_training_job_a100(source_tarball_s3: str, hyperparams: dict, job_name: str, s3_bucket: str = "openoptions-ml"):
+def run_training_job_a100(
+    source_tarball_s3: str,
+    hyperparams: dict,
+    job_name: str,
+    s3_bucket: str | None = None,
+):
     return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
 
 
 @app.function(image=ml_image, gpu="A100-80GB", timeout=86400, retries=0, secrets=[aws_secret, hf_secret])
-def run_training_job_a100_80gb(source_tarball_s3: str, hyperparams: dict, job_name: str, s3_bucket: str = "openoptions-ml"):
+def run_training_job_a100_80gb(
+    source_tarball_s3: str,
+    hyperparams: dict,
+    job_name: str,
+    s3_bucket: str | None = None,
+):
     return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
 
 
 @app.function(image=ml_image, gpu="H100", timeout=86400, retries=0, secrets=[aws_secret, hf_secret])
-def run_training_job_h100(source_tarball_s3: str, hyperparams: dict, job_name: str, s3_bucket: str = "openoptions-ml"):
+def run_training_job_h100(
+    source_tarball_s3: str,
+    hyperparams: dict,
+    job_name: str,
+    s3_bucket: str | None = None,
+):
     return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
 
 
@@ -303,7 +356,7 @@ def _run_inference_impl(
     numerai_secret_key: str,
     numerai_model_id: str,
     job_name: str,
-    s3_bucket: str = "openoptions-ml",
+    s3_bucket: str | None = None,
 ):
     """Run inference + Numerai upload for a single submission.
 
@@ -321,6 +374,7 @@ def _run_inference_impl(
 
     import boto3
 
+    s3_bucket = _resolve_s3_bucket(s3_bucket)
     start_time = time.time()
     s3 = boto3.client("s3")
 
@@ -398,7 +452,7 @@ def run_inference_job(
     numerai_secret_key: str,
     numerai_model_id: str,
     job_name: str,
-    s3_bucket: str = "openoptions-ml",
+    s3_bucket: str | None = None,
 ):
     return _run_inference_impl(
         source_tarball_s3=source_tarball_s3,
@@ -431,9 +485,9 @@ def spawn_training(body: dict):
     POST body:
         {
             "gpu": "h100",
-            "job_name": "oo-exp-78-...",
+            "job_name": "numerai-dashboard-exp-78-...",
             "hyperparams": {...},
-            "s3_bucket": "openoptions-ml"  // optional
+            "s3_bucket": "your-artifact-bucket"
         }
 
     Returns:
@@ -445,7 +499,10 @@ def spawn_training(body: dict):
         hyperparams = _validate_hyperparams(body.get("hyperparams", {}))
     except ValueError as e:
         return {"status": "error", "detail": str(e)}
-    s3_bucket = body.get("s3_bucket", "openoptions-ml")
+    try:
+        s3_bucket = _resolve_s3_bucket(body.get("s3_bucket"))
+    except ValueError as error:
+        return {"status": "error", "detail": str(error)}
     source_uri = f"s3://{s3_bucket}/code/ml-source.tar.gz"
 
     fn = GPU_FN_MAP.get(gpu)
@@ -473,7 +530,7 @@ def spawn_inference(body: dict):
             "numerai_public_id": "...",
             "numerai_secret_key": "...",
             "numerai_model_id": "<slot uuid>",
-            "s3_bucket": "openoptions-ml"  // optional
+            "s3_bucket": "your-artifact-bucket"
         }
 
     Returns:
@@ -496,7 +553,10 @@ def spawn_inference(body: dict):
             "detail": "numerai_public_id, numerai_secret_key, and numerai_model_id are required",
         }
 
-    s3_bucket = body.get("s3_bucket", "openoptions-ml")
+    try:
+        s3_bucket = _resolve_s3_bucket(body.get("s3_bucket"))
+    except ValueError as error:
+        return {"status": "error", "detail": str(error)}
     source_uri = f"s3://{s3_bucket}/code/ml-source.tar.gz"
 
     call = run_inference_job.spawn(
@@ -578,7 +638,10 @@ def job_status(body: dict):
     if not call_id:
         return {"status": "error", "detail": "call_id is required"}
     job_name = body.get("job_name")
-    s3_bucket = body.get("s3_bucket", "openoptions-ml")
+    try:
+        s3_bucket = _resolve_s3_bucket(body.get("s3_bucket"))
+    except ValueError as error:
+        return {"status": "error", "detail": str(error)}
     snapshot = _job_status_snapshot(job_name, s3_bucket)
 
     try:
@@ -633,9 +696,15 @@ if __name__ == "__main__":
     parser.add_argument("--model-type", default="lgbm")
     parser.add_argument("--gpu", default="a10g", choices=list(GPU_MAP.keys()))
     parser.add_argument("--neutralization-pct", type=float, default=25.0)
-    parser.add_argument("--s3-bucket", default="openoptions-ml")
+    parser.add_argument(
+        "--s3-bucket",
+        default=os.environ.get("ML_S3_BUCKET") or os.environ.get("ML_ARTIFACT_BUCKET"),
+        help="S3 artifact bucket (defaults to ML_S3_BUCKET)",
+    )
     parser.add_argument("--extra", nargs="*", help="Extra hyperparams as key=value")
     args = parser.parse_args()
+    if not args.s3_bucket:
+        parser.error("--s3-bucket or ML_S3_BUCKET is required")
 
     hyperparams = {
         "feature_set": args.feature_set,
@@ -660,7 +729,7 @@ if __name__ == "__main__":
     }
     fn_name = fn_name_map.get(args.gpu, "run_training_job")
     print(f"Using Modal function: {fn_name} (gpu={args.gpu})")
-    fn = modal.Function.from_name("openoptions-ml", fn_name)
+    fn = modal.Function.from_name(MODAL_APP_NAME, fn_name)
     call = fn.spawn(
         source_tarball_s3=source_uri,
         hyperparams=hyperparams,

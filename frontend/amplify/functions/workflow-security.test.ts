@@ -43,10 +43,10 @@ describe('workflow security boundary', () => {
 		).toBe('https://api.primeintellect.ai');
 		expect(
 			trustedProviderUrl(
-				'https://almaz--openoptions-ml-spawn-training.modal.run',
+				'https://operator--numerai-worker-spawn-training.modal.run',
 				'modal'
 			)
-		).toBe('https://almaz--openoptions-ml-spawn-training.modal.run');
+		).toBe('https://operator--numerai-worker-spawn-training.modal.run');
 
 		expect(() => trustedProviderUrl('https://attacker.example', 'prime_intellect')).toThrow(
 			'https://api.primeintellect.ai'
@@ -95,8 +95,8 @@ describe('workflow security boundary', () => {
 			trustedProviderConfig(
 				JSON.stringify({
 					modal: {
-						appHost: 'almaz--openoptions-ml',
-						statusUrl: 'https://almaz--openoptions-ml-job-status.modal.run/{jobId}',
+						appHost: 'operator--numerai-worker',
+						statusUrl: 'https://operator--numerai-worker-job-status.modal.run/{jobId}',
 					},
 				}),
 				'modal'
