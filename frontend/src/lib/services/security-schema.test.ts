@@ -4,6 +4,9 @@ import { describe, expect, it } from 'vitest';
 
 const schemaSource = readFileSync(resolve(process.cwd(), 'amplify/data/resource.ts'), 'utf8');
 const backendSource = readFileSync(resolve(process.cwd(), 'amplify/backend.ts'), 'utf8');
+const modalSource = readFileSync(resolve(process.cwd(), 'amplify/functions/modal.ts'), 'utf8');
+const appHtmlSource = readFileSync(resolve(process.cwd(), 'src/app.html'), 'utf8');
+const layoutSource = readFileSync(resolve(process.cwd(), 'src/routes/+layout.svelte'), 'utf8');
 
 function modelBlock(modelName: string): string {
 	const marker = `\t${modelName}: a`;
@@ -57,5 +60,28 @@ describe('credential schema hardening', () => {
 			const source = readFileSync(resolve(process.cwd(), handlerPath), 'utf8');
 			expect(source, handlerPath).toContain('requireCallerSub');
 		}
+	});
+
+	it('keeps operator Modal infrastructure out of source defaults', () => {
+		expect(modalSource).toContain('process.env.MODAL_APP_HOST');
+		expect(modalSource).toContain('process.env.ML_ARTIFACT_BUCKET');
+		expect(modalSource).not.toContain('almaz--openoptions-ml');
+		expect(modalSource).not.toContain("DEFAULT_S3_BUCKET = 'openoptions-ml'");
+
+		for (const resourcePath of [
+			'amplify/functions/start-training/resource.ts',
+			'amplify/functions/cancel-training/resource.ts',
+			'amplify/functions/poll-training-status/resource.ts',
+			'amplify/functions/submit-model/resource.ts',
+		]) {
+			const source = readFileSync(resolve(process.cwd(), resourcePath), 'utf8');
+			expect(source, resourcePath).toContain('modalFunctionEnvironment');
+		}
+	});
+
+	it('loads optional analytics from public build configuration', () => {
+		expect(appHtmlSource).not.toContain('googletagmanager.com');
+		expect(appHtmlSource).not.toContain('G-CWPVV1HBES');
+		expect(layoutSource).toContain('VITE_GA_MEASUREMENT_ID');
 	});
 });
