@@ -28,6 +28,20 @@ Numerai model operations span datasets, feature pipelines, experiments, compute 
 artifacts, model lineage, and tournament submissions. Numerai Dashboard brings those parts
 into one workspace while keeping the executable ML workload available as regular Python.
 
+## Screenshots
+
+### Model operations overview
+
+[![Numerai Dashboard model operations overview](docs/screenshots/overview-desktop.png)](https://numeraidashboard.com)
+
+### Compute routing
+
+[![Numerai Dashboard compute-provider routing workflow](docs/screenshots/compute-routing-desktop.png)](https://numeraidashboard.com)
+
+### Workflow documentation
+
+[![Numerai Dashboard model lifecycle documentation](docs/screenshots/workflow-docs-desktop.png)](https://numeraidashboard.com/docs)
+
 ## Capabilities
 
 - Build and persist model pipelines, branches, sweep plans, and training runs.
