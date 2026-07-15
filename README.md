@@ -63,7 +63,7 @@ into one workspace while keeping the executable ML workload available as regular
 | Authentication and workspace data | Working | Cognito email/passkey auth and owner-scoped Amplify Data models. |
 | Credential storage | Working | User credentials are stored as SSM SecureString parameters; data rows contain only owner-scoped references. |
 | Modal | API-backed | Training launch, status, cancellation, and inference/submission paths call Modal endpoints. Token verification is currently format-based. |
-| Prime Intellect | API-backed | Pod launch, polling, cancellation, and template synchronization call the provider API. Provider endpoint assumptions still need broader production validation. |
+| Prime Intellect | API-backed | Live offer selection, managed/custom worker templates, pod launch, log polling, runtime limits, and automatic teardown call the provider API. |
 | Numerai | Partial | Live account verification and submission-history reads are implemented. Automated score reconciliation and non-Modal upload workers remain incomplete. |
 | SageMaker, local, and custom providers | Contract only | Provider records and deterministic queue transitions exist; Amplify does not yet launch real workers for these providers. |
 | Round metrics | Prototype | `refreshRoundMetrics` currently produces deterministic placeholder snapshots, not live tournament scores. |
@@ -145,6 +145,7 @@ Set non-secret deployment defaults once under **Amplify Hosting > Environment va
 | `PASSKEY_RELYING_PARTY_ID` | Production | WebAuthn relying-party domain, such as `numeraidashboard.com`. |
 | `MODAL_APP_HOST` | For managed Modal fallback | Modal web-endpoint host prefix used when a provider record does not supply an override. |
 | `ML_ARTIFACT_BUCKET` | For managed Modal fallback | S3 bucket used when a provider record does not supply its own artifact bucket. |
+| `PRIME_DEFAULT_TEMPLATE_ID` | For one-click Prime training | Operator-owned public Prime custom template that runs `ml/prime_intellect/worker.py`; users may override it in advanced provider settings. |
 | `VITE_GA_MEASUREMENT_ID` | No | Public Google Analytics measurement ID. Analytics stays disabled when omitted. |
 
 Per-provider Modal URLs and configuration take precedence over the app-level Modal values.

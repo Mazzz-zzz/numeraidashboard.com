@@ -10,7 +10,7 @@ import { cancelTraining } from './functions/cancel-training/resource';
 import { pollTrainingStatus } from './functions/poll-training-status/resource';
 import { submitModel } from './functions/submit-model/resource';
 import { refreshRoundMetrics } from './functions/refresh-round-metrics/resource';
-import { syncPrimeTemplate } from './functions/sync-prime-template/resource';
+import { fetchPrimeOffers } from './functions/fetch-prime-offers/resource';
 import { fetchNumeraiSubmissions } from './functions/fetch-numerai-submissions/resource';
 
 const backend = defineBackend({
@@ -23,7 +23,7 @@ const backend = defineBackend({
 	pollTrainingStatus,
 	submitModel,
 	refreshRoundMetrics,
-	syncPrimeTemplate,
+	fetchPrimeOffers,
 	fetchNumeraiSubmissions,
 });
 
@@ -49,6 +49,14 @@ backend.verifyComputeProvider.resources.lambda.addToRolePolicy(secretWritePolicy
 backend.startTraining.resources.lambda.addToRolePolicy(secretReadPolicy);
 backend.pollTrainingStatus.resources.lambda.addToRolePolicy(secretReadPolicy);
 backend.cancelTraining.resources.lambda.addToRolePolicy(secretReadPolicy);
-backend.syncPrimeTemplate.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.fetchPrimeOffers.resources.lambda.addToRolePolicy(secretReadPolicy);
 backend.submitModel.resources.lambda.addToRolePolicy(secretReadPolicy);
 backend.fetchNumeraiSubmissions.resources.lambda.addToRolePolicy(secretReadPolicy);
+
+const artifactBucketName = process.env.ML_ARTIFACT_BUCKET?.trim();
+if (artifactBucketName) {
+	backend.startTraining.resources.lambda.addToRolePolicy(new PolicyStatement({
+		actions: ['s3:PutObject'],
+		resources: [`arn:${Stack.of(backend.startTraining.resources.lambda).partition}:s3:::${artifactBucketName}/prime/*`],
+	}));
+}

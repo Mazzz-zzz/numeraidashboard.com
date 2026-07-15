@@ -41,7 +41,13 @@ describe('model launch service', () => {
 			'L40S_48GB'
 		);
 
-		expect(config).toEqual({ primeIntellect: { dryRun: true, gpuType: 'L40S_48GB' } });
+		expect(config).toEqual({
+			primeIntellect: {
+				dryRun: true,
+				gpuType: 'L40S_48GB',
+				envVars: { NUMERAI_RUN_CONFIG_JSON: '{}' }
+			}
+		});
 		expect(typeof config).toBe('object');
 	});
 

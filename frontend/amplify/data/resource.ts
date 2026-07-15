@@ -6,7 +6,7 @@ import { cancelTraining } from '../functions/cancel-training/resource';
 import { pollTrainingStatus } from '../functions/poll-training-status/resource';
 import { submitModel } from '../functions/submit-model/resource';
 import { refreshRoundMetrics } from '../functions/refresh-round-metrics/resource';
-import { syncPrimeTemplate } from '../functions/sync-prime-template/resource';
+import { fetchPrimeOffers } from '../functions/fetch-prime-offers/resource';
 import { fetchNumeraiSubmissions } from '../functions/fetch-numerai-submissions/resource';
 
 const schema = a.schema({
@@ -222,15 +222,11 @@ const schema = a.schema({
 		error: a.string(),
 	}),
 
-	PrimeTemplateSyncResult: a.customType({
+	PrimeOffersResult: a.customType({
 		ok: a.boolean().required(),
-		status: a.string().required(),
 		checkedAt: a.datetime().required(),
 		error: a.string(),
-		templateName: a.string(),
-		customTemplateId: a.string(),
-		dockerImage: a.string(),
-		providerConfigJson: a.json(),
+		offersJson: a.string(),
 	}),
 
 	NumeraiSubmissionsResult: a.customType({
@@ -352,23 +348,18 @@ const schema = a.schema({
 		.authorization((allow) => [allow.authenticated()])
 		.handler(a.handler.function(refreshRoundMetrics)),
 
-	syncPrimeTemplate: a
-		.mutation()
+	fetchPrimeOffers: a
+		.query()
 		.arguments({
-			apiKey: a.string(),
-			apiKeyRef: a.string(),
+			apiKeyRef: a.string().required(),
 			baseUrl: a.string(),
-			templateName: a.string().required(),
-			customTemplateId: a.string(),
-			dockerImage: a.string(),
-			registryCredentialsId: a.string(),
-			gpuType: a.string(),
+			gpuType: a.string().required(),
+			gpuCount: a.integer(),
 			maxPrice: a.float(),
-			dryRun: a.boolean(),
 		})
-		.returns(a.ref('PrimeTemplateSyncResult'))
+		.returns(a.ref('PrimeOffersResult'))
 		.authorization((allow) => [allow.authenticated()])
-		.handler(a.handler.function(syncPrimeTemplate)),
+		.handler(a.handler.function(fetchPrimeOffers)),
 
 	fetchNumeraiSubmissions: a
 		.mutation()
