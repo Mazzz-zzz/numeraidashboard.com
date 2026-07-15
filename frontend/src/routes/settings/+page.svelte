@@ -33,6 +33,10 @@
 		awsRoleArn: string;
 		awsRegion: string;
 		baseUrl: string;
+		customTemplateId: string;
+		maxPrice: string;
+		maxRuntimeMinutes: string;
+		diskSize: string;
 		monthlyBudgetUsd: string;
 		notes: string;
 	};
@@ -164,6 +168,10 @@
 		awsRoleArn: '',
 		awsRegion: '',
 		baseUrl: '',
+		customTemplateId: '',
+		maxPrice: '',
+		maxRuntimeMinutes: '180',
+		diskSize: '80',
 		monthlyBudgetUsd: '',
 		notes: ''
 	});
@@ -358,6 +366,7 @@
 			const id = node.id.replace(/^provider-/, '');
 			const p = providers.find((pp) => pp.id === id);
 			if (p) {
+				const prime = primeProviderConfig(p.credentialsJson);
 				providerForm = {
 					name: p.name,
 					providerType: (p.providerType as ProviderType) ?? 'custom',
@@ -367,14 +376,18 @@
 					awsRoleArn: p.awsRoleArn ?? '',
 					awsRegion: p.awsRegion ?? '',
 					baseUrl: p.baseUrl ?? '',
+					customTemplateId: stringValue(prime.customTemplateId),
+					maxPrice: numberString(prime.maxPrice),
+					maxRuntimeMinutes: numberString(prime.maxRuntimeMinutes) || '180',
+					diskSize: numberString(prime.diskSize) || '80',
 					monthlyBudgetUsd: p.monthlyBudgetUsd != null ? String(p.monthlyBudgetUsd) : '',
-						notes: p.notes ?? ''
-					};
-					providerCheck = providerCheckStateFor(p);
-					verifiedProviderRefs = null;
-					drawer = { kind: 'provider', id };
-				}
+					notes: p.notes ?? ''
+				};
+				providerCheck = providerCheckStateFor(p);
+				verifiedProviderRefs = null;
+				drawer = { kind: 'provider', id };
 			}
+		}
 	}
 
 	function blankProviderForm() {
@@ -387,6 +400,10 @@
 			awsRoleArn: '',
 			awsRegion: '',
 			baseUrl: '',
+			customTemplateId: '',
+			maxPrice: '',
+			maxRuntimeMinutes: '180',
+			diskSize: '80',
 			monthlyBudgetUsd: '',
 			notes: ''
 		};
@@ -429,9 +446,49 @@
 	}
 
 	function providerConfigJsonFromForm() {
-		if (drawer.kind !== 'provider') return null;
-		if (!currentProvider || currentProvider.providerType !== providerForm.providerType) return null;
-		return currentProvider.credentialsJson ?? null;
+		if (drawer.kind !== 'provider' && drawer.kind !== 'add-provider') return null;
+		const existing = currentProvider?.providerType === providerForm.providerType
+			? jsonRecord(currentProvider.credentialsJson)
+			: {};
+		if (providerForm.providerType !== 'prime_intellect') return currentProvider?.credentialsJson ?? null;
+		const oldPrime = primeProviderConfig(existing);
+		const { customTemplateId: _oldTemplate, maxPrice: _oldMaxPrice, ...primeWithoutOverrides } = oldPrime;
+		const { prime_intellect: _oldSnakeCase, primeIntellect: _oldCamelCase, ...root } = existing;
+		return {
+			...root,
+			primeIntellect: {
+				...primeWithoutOverrides,
+				...(providerForm.customTemplateId.trim() ? { customTemplateId: providerForm.customTemplateId.trim() } : {}),
+				...(providerForm.maxPrice ? { maxPrice: Number(providerForm.maxPrice) } : {}),
+				maxRuntimeMinutes: Number(providerForm.maxRuntimeMinutes) || 180,
+				diskSize: Number(providerForm.diskSize) || 80
+			}
+		};
+	}
+
+	function jsonRecord(value: unknown): Record<string, unknown> {
+		if (value && typeof value === 'object' && !Array.isArray(value)) return value as Record<string, unknown>;
+		if (typeof value !== 'string') return {};
+		try {
+			const parsed = JSON.parse(value);
+			return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : {};
+		} catch {
+			return {};
+		}
+	}
+
+	function primeProviderConfig(value: unknown): Record<string, unknown> {
+		const root = jsonRecord(value);
+		const nested = root.primeIntellect ?? root.prime_intellect;
+		return nested && typeof nested === 'object' && !Array.isArray(nested) ? nested as Record<string, unknown> : {};
+	}
+
+	function stringValue(value: unknown): string {
+		return typeof value === 'string' ? value : '';
+	}
+
+	function numberString(value: unknown): string {
+		return typeof value === 'number' && Number.isFinite(value) ? String(value) : '';
 	}
 
 	function markProviderCheckDirty() {
@@ -938,16 +995,36 @@
 								{#if providerForm.providerType === 'prime_intellect'}
 									<label>
 										<span>API key {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : ''}</span>
-										<input type={settingsCredentialInputType('primeIntellectApiKey')} bind:value={providerForm.apiKey} autocomplete="off" placeholder="pi_…" />
+										<input type={settingsCredentialInputType('primeIntellectApiKey')} bind:value={providerForm.apiKey} autocomplete="off" placeholder="pit_…" />
 									</label>
 									<label>
 										<span>Workspace ID (optional)</span>
 										<input type="text" bind:value={providerForm.workspaceId} placeholder="ws_…" />
 									</label>
-									<label>
-										<span>Base URL (optional override)</span>
-										<input type="text" bind:value={providerForm.baseUrl} placeholder="https://api.primeintellect.ai" />
-									</label>
+									<p class="field-note"><strong>Worker template:</strong> Managed Numerai worker (automatic)</p>
+									<details class="advanced-fields">
+										<summary>Advanced Prime settings</summary>
+										<label>
+											<span>Custom template ID (optional override)</span>
+											<input type="text" bind:value={providerForm.customTemplateId} placeholder="Leave blank to use the managed worker" />
+										</label>
+										<label>
+											<span>Maximum hourly price (USD)</span>
+											<input type="number" min="0" step="0.01" bind:value={providerForm.maxPrice} placeholder="No provider-specific cap" />
+										</label>
+										<label>
+											<span>Maximum runtime (minutes)</span>
+											<input type="number" min="5" max="1440" step="5" bind:value={providerForm.maxRuntimeMinutes} />
+										</label>
+										<label>
+											<span>Disk size (GB)</span>
+											<input type="number" min="20" step="10" bind:value={providerForm.diskSize} />
+										</label>
+										<label>
+											<span>Base URL (optional override)</span>
+											<input type="text" bind:value={providerForm.baseUrl} placeholder="https://api.primeintellect.ai" />
+										</label>
+									</details>
 								{:else if providerForm.providerType === 'modal'}
 									<label>
 										<span>Token ID {currentProvider?.apiKeyRef ? '(leave blank to keep current)' : ''}</span>
@@ -1171,6 +1248,20 @@
 	.field-note code {
 		font-size: 0.8rem;
 	}
+	.advanced-fields {
+		display: grid;
+		gap: 0.8rem;
+		padding: 0.75rem;
+		border: 1px solid var(--border-light);
+		border-radius: 4px;
+	}
+	.advanced-fields summary {
+		cursor: pointer;
+		font-size: 0.8rem;
+		font-weight: 700;
+	}
+	.advanced-fields[open] summary { margin-bottom: 0.8rem; }
+	.advanced-fields label { margin-top: 0.65rem; }
 
 	.connection-check {
 		display: grid;

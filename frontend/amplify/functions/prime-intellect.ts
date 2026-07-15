@@ -1,4 +1,6 @@
 import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
+import { PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 
 export type TrainingActionResult = {
 	readonly ok: boolean;
@@ -54,18 +56,7 @@ type PrimeSettings = {
 	readonly teamId: string | null;
 	readonly sharedWithTeam: boolean;
 	readonly envVars: Record<string, string>;
-};
-
-type AvailabilityOffer = {
-	readonly cloudId?: unknown;
-	readonly gpuType?: unknown;
-	readonly socket?: unknown;
-	readonly provider?: unknown;
-	readonly dataCenterId?: unknown;
-	readonly dataCenter?: unknown;
-	readonly country?: unknown;
-	readonly security?: unknown;
-	readonly prices?: { readonly onDemand?: unknown };
+	readonly maxRuntimeMinutes: number;
 };
 
 type PrimePod = {
@@ -77,11 +68,13 @@ type PrimePod = {
 	readonly priceHr?: unknown;
 	readonly sshConnection?: unknown;
 	readonly ip?: unknown;
+	readonly createdAt?: unknown;
 };
 
 const ssm = new SSMClient({});
-const defaultDirectImage = 'cuda_12_6_pytorch_2_7';
+const s3 = new S3Client({});
 const defaultGpuType = 'L40S_48GB';
+const defaultMaxRuntimeMinutes = 180;
 
 export async function launchPrimePod(
 	input: PrimeLaunchInput,
@@ -92,15 +85,19 @@ export async function launchPrimePod(
 	if (!apiKey) return failure('Prime Intellect apiKeyRef is required', input.checkedAt, null);
 
 	const settings = primeSettings(input);
-	if (!settings.customTemplateId && settings.image === 'custom_template') {
-		return failure('Prime Intellect customTemplateId is required for custom_template pods', input.checkedAt, null);
+	if (!settings.customTemplateId) {
+		return failure(
+			'Prime Intellect managed worker template is not configured. Set PRIME_DEFAULT_TEMPLATE_ID or add a custom template ID in provider settings.',
+			input.checkedAt,
+			null
+		);
 	}
 
-	const envVars = {
+	const baseEnvVars = {
+		...settings.envVars,
 		RUN_ID: input.runId,
 		PROVIDER_ID: input.providerId,
 		NUMERAI_DASHBOARD_JOB: 'true',
-		...settings.envVars,
 	};
 
 	if (settings.dryRun) {
@@ -117,13 +114,12 @@ export async function launchPrimePod(
 		};
 	}
 
-	let offer: AvailabilityOffer | null;
 	let payload: Record<string, unknown>;
 	let resp: Response;
 	let body: PrimePod | null;
 	try {
-		offer = await selectOffer(fetchFn, input, settings, apiKey);
-		payload = buildCreatePodPayload(input, settings, offer, envVars);
+		const envVars = { ...baseEnvVars, ...(await primeArtifactUpload(input.runId)) };
+		payload = buildCreatePodPayload(input, settings, envVars);
 		resp = await primeFetch(fetchFn, input, apiKey, '/api/v1/pods/', {
 			method: 'POST',
 			headers: { 'Content-Type': 'application/json' },
@@ -189,12 +185,59 @@ export async function pollPrimePod(
 	const providerStatus = stringOrNull(pod?.status);
 	const status = statusFromPodAndLogs(providerStatus, logTail);
 	const artifactUri = parseArtifactUri(logTail);
+	const createdAt = dateOrNull(pod?.createdAt);
+	const priceHr = numberOrNull(pod?.priceHr);
+	const elapsedHours = createdAt ? Math.max(0, (Date.parse(input.checkedAt) - createdAt.getTime()) / 3_600_000) : null;
+	const timedOut = elapsedHours !== null && elapsedHours * 60 >= settings.maxRuntimeMinutes;
+	if (timedOut && status !== 'completed' && status !== 'failed' && status !== 'cancelled') {
+		const terminated = await deletePrimePod(fetchFn, input, apiKey);
+		if (!terminated) {
+			return {
+				ok: true,
+				status: 'running',
+				providerJobId: input.providerJobId,
+				checkedAt: input.checkedAt,
+				logTail: `${logTail ?? ''}\nRuntime limit reached; pod cleanup will be retried on the next status check.`.trim(),
+				error: null,
+				costUsd: elapsedHours !== null && priceHr !== null ? elapsedHours * priceHr : null,
+				metricsJson: { providerStatus, cleanupPending: true, timedOut: true },
+				artifactUri,
+			};
+		}
+		return {
+			ok: false,
+			status: 'failed',
+			providerJobId: input.providerJobId,
+			checkedAt: input.checkedAt,
+			logTail: logTail ?? `Prime Intellect pod exceeded its ${settings.maxRuntimeMinutes} minute runtime limit and was terminated.`,
+			error: `Prime Intellect training exceeded its ${settings.maxRuntimeMinutes} minute runtime limit.`,
+			costUsd: elapsedHours !== null && priceHr !== null ? elapsedHours * priceHr : null,
+			metricsJson: { providerStatus, timedOut: true, maxRuntimeMinutes: settings.maxRuntimeMinutes },
+			artifactUri,
+		};
+	}
+	if (status === 'completed' || status === 'failed') {
+		const terminated = await deletePrimePod(fetchFn, input, apiKey);
+		if (!terminated) {
+			return {
+				ok: true,
+				status: 'running',
+				providerJobId: input.providerJobId,
+				checkedAt: input.checkedAt,
+				logTail: `${logTail ?? ''}\nTraining ended; pod cleanup will be retried on the next status check.`.trim(),
+				error: null,
+				costUsd: elapsedHours !== null && priceHr !== null ? elapsedHours * priceHr : null,
+				metricsJson: { providerStatus, cleanupPending: true, trainingStatus: status },
+				artifactUri,
+			};
+		}
+	}
 	const metricsJson = {
 		providerStatus,
 		installationStatus: stringOrNull(pod?.installationStatus),
 		installationFailure: stringOrNull(pod?.installationFailure),
 		installationProgress: numberOrNull(pod?.installationProgress),
-		priceHr: numberOrNull(pod?.priceHr),
+		priceHr,
 		...parseMetricsJson(logTail),
 	};
 
@@ -205,7 +248,7 @@ export async function pollPrimePod(
 		checkedAt: input.checkedAt,
 		logTail: logTail || `Prime Intellect pod ${input.providerJobId}: ${providerStatus ?? 'unknown'}.`,
 		error: null,
-		costUsd: null,
+		costUsd: elapsedHours !== null && priceHr !== null ? elapsedHours * priceHr : null,
 		metricsJson,
 		artifactUri,
 	};
@@ -244,13 +287,14 @@ export async function resolvePrimeApiKey(
 
 function primeSettings(input: PrimeProviderInput): PrimeSettings {
 	const raw = settingsRecord(input.providerConfigJson);
-	const gpuCount = numberFrom(raw.gpuCount) ?? 1;
-	const customTemplateId = stringFrom(raw.customTemplateId);
+	const gpuCount = Math.min(8, Math.max(1, Math.trunc(numberFrom(raw.gpuCount) ?? 1)));
+	const maxRuntimeMinutes = Math.min(1_440, Math.max(5, numberFrom(raw.maxRuntimeMinutes) ?? defaultMaxRuntimeMinutes));
+	const customTemplateId = stringFrom(raw.customTemplateId) ?? stringFrom(process.env.PRIME_DEFAULT_TEMPLATE_ID);
 	return {
 		dryRun: raw.dryRun === true,
 		gpuType: stringFrom(raw.gpuType) ?? defaultGpuType,
 		gpuCount,
-		image: stringFrom(raw.image) ?? stringFrom(raw.environmentType) ?? (customTemplateId ? 'custom_template' : defaultDirectImage),
+		image: 'custom_template',
 		customTemplateId,
 		providerType: stringFrom(raw.providerType),
 		cloudId: stringFrom(raw.cloudId),
@@ -261,10 +305,11 @@ function primeSettings(input: PrimeProviderInput): PrimeSettings {
 		diskSize: numberFrom(raw.diskSize),
 		maxPrice: numberFrom(raw.maxPrice),
 		sshKeyId: stringFrom(raw.sshKeyId),
-		autoRestart: raw.autoRestart === true,
+		autoRestart: false,
 		teamId: stringFrom(raw.teamId) ?? input.workspaceId?.trim() ?? null,
 		sharedWithTeam: raw.sharedWithTeam === true,
 		envVars: envVarsFrom(raw.envVars),
+		maxRuntimeMinutes,
 	};
 }
 
@@ -275,55 +320,16 @@ function settingsRecord(value: unknown): Record<string, unknown> {
 	return nested ?? root;
 }
 
-async function selectOffer(
-	fetchFn: FetchFn,
-	input: PrimeProviderInput,
-	settings: PrimeSettings,
-	apiKey: string
-): Promise<AvailabilityOffer | null> {
-	if (settings.cloudId && settings.socket && settings.providerType) return null;
-	const params = new URLSearchParams({
-		gpu_type: settings.gpuType,
-		gpu_count: String(settings.gpuCount),
-	});
-	const resp = await primeFetch(fetchFn, input, apiKey, `/api/v1/availability/gpus?${params.toString()}`);
-	const body = (await resp.json().catch(() => null)) as { readonly items?: AvailabilityOffer[] } | null;
-	if (!resp.ok) throw new Error(`Prime Intellect availability failed (${resp.status}): ${bodySummary(body)}`);
-
-	const availableOffers = body?.items ?? [];
-	const offers = availableOffers
-		.filter((offer) => compatibleOfferForImage(offer, settings.image))
-		.filter((offer) => settings.maxPrice === null || (numberOrNull(offer.prices?.onDemand) ?? Infinity) <= settings.maxPrice)
-		.sort((a, b) => (numberOrNull(a.prices?.onDemand) ?? Infinity) - (numberOrNull(b.prices?.onDemand) ?? Infinity));
-	if (!offers.length && availableOffers.length) {
-		throw new Error(`No Prime Intellect availability compatible with ${settings.image} for ${settings.gpuType}x${settings.gpuCount}`);
-	}
-	if (!offers.length) throw new Error(`No Prime Intellect availability found for ${settings.gpuType}x${settings.gpuCount}`);
-	return offers[0];
-}
-
-function compatibleOfferForImage(offer: AvailabilityOffer, image: string): boolean {
-	const provider = stringFrom(offer.provider)?.toLowerCase();
-	if (isDirectCudaImage(image) && provider === 'massedcompute') return false;
-	return true;
-}
-
-function isDirectCudaImage(image: string): boolean {
-	const normalized = image.toLowerCase();
-	return normalized === 'ubuntu_22_cuda_12' || normalized.startsWith('cuda_');
-}
-
 function buildCreatePodPayload(
 	input: PrimeLaunchInput,
 	settings: PrimeSettings,
-	offer: AvailabilityOffer | null,
 	envVars: Record<string, string>
 ): Record<string, unknown> {
-	const cloudId = settings.cloudId ?? stringFrom(offer?.cloudId);
-	const socket = settings.socket ?? stringFrom(offer?.socket);
-	const providerType = settings.providerType ?? stringFrom(offer?.provider);
+	const cloudId = settings.cloudId;
+	const socket = settings.socket;
+	const providerType = settings.providerType;
 	if (!cloudId || !socket || !providerType) {
-		throw new Error('Prime Intellect pod creation needs cloudId, socket, and providerType from config or availability.');
+		throw new Error('Select an available Prime Intellect GPU offer before launching.');
 	}
 
 	const pod: Record<string, unknown> = {
@@ -339,9 +345,9 @@ function buildCreatePodPayload(
 	};
 	const customTemplateId = settings.customTemplateId;
 	if (customTemplateId) pod.customTemplateId = customTemplateId;
-	const dataCenterId = settings.dataCenterId ?? stringFrom(offer?.dataCenterId) ?? stringFrom(offer?.dataCenter);
+	const dataCenterId = settings.dataCenterId;
 	if (dataCenterId) pod.dataCenterId = dataCenterId;
-	const country = settings.country ?? stringFrom(offer?.country);
+	const country = settings.country;
 	if (country) pod.country = country;
 	if (settings.diskSize !== null) pod.diskSize = settings.diskSize;
 	if (settings.maxPrice !== null) pod.maxPrice = settings.maxPrice;
@@ -379,6 +385,16 @@ async function getPrimeLogTail(fetchFn: FetchFn, input: PrimeStatusInput, apiKey
 	if (!resp.ok) return null;
 	const body = await resp.text();
 	return body.trim() || null;
+}
+
+async function deletePrimePod(fetchFn: FetchFn, input: PrimeStatusInput, apiKey: string): Promise<boolean> {
+	if (!input.providerJobId) return true;
+	try {
+		const response = await primeFetch(fetchFn, input, apiKey, `/api/v1/pods/${encodeURIComponent(input.providerJobId)}`, { method: 'DELETE' });
+		return response.ok || response.status === 404;
+	} catch {
+		return false;
+	}
 }
 
 function statusFromPodAndLogs(providerStatus: string | null, logTail: string | null): string {
@@ -480,6 +496,12 @@ function numberOrNull(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) ? value : null;
 }
 
+function dateOrNull(value: unknown): Date | null {
+	if (typeof value !== 'string') return null;
+	const date = new Date(value);
+	return Number.isNaN(date.getTime()) ? null : date;
+}
+
 function envVarsFrom(value: unknown): Record<string, string> {
 	const record = asRecord(value);
 	if (!record) return {};
@@ -494,4 +516,19 @@ async function getSecret(name: string): Promise<string> {
 	const result = await ssm.send(new GetParameterCommand({ Name: name, WithDecryption: true }));
 	if (!result.Parameter?.Value) throw new Error(`Secret reference not found: ${name}`);
 	return result.Parameter.Value;
+}
+
+async function primeArtifactUpload(runId: string): Promise<Record<string, string>> {
+	const bucket = stringFrom(process.env.ML_ARTIFACT_BUCKET);
+	if (!bucket) return {};
+	const key = `prime/${runId.replace(/[^a-zA-Z0-9._-]/g, '-')}/model.tar.gz`;
+	const uploadUrl = await getSignedUrl(
+		s3,
+		new PutObjectCommand({ Bucket: bucket, Key: key, ContentType: 'application/gzip' }),
+		{ expiresIn: 26 * 60 * 60 }
+	);
+	return {
+		NUMERAI_ARTIFACT_UPLOAD_URL: uploadUrl,
+		NUMERAI_ARTIFACT_URI: `s3://${bucket}/${key}`,
+	};
 }

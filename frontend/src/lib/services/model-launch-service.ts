@@ -12,6 +12,7 @@ import {
 	type TrainingActionResult
 } from './training-service';
 import { assertProviderGpu } from './provider-gpu-catalog';
+import { primeOfferConfig, type PrimeOffer } from './prime-offers-service';
 
 type Client = ReturnType<typeof dataClient>;
 
@@ -76,6 +77,7 @@ export async function launchModelDraft(
 		readonly provider: ComputeProvider;
 		readonly maxSpendUsd: number | null;
 		readonly gpuType?: string | null;
+		readonly primeOffer?: PrimeOffer | null;
 	},
 	client: Client = dataClient()
 ): Promise<ModelTrainingResult> {
@@ -108,7 +110,8 @@ export async function launchModelDraft(
 			providerConfigJson: providerConfigForLaunch(
 				input.provider,
 				input.gpuType ?? null,
-				jsonRecord(lineage.runConfig)
+				jsonRecord(lineage.runConfig),
+				input.primeOffer ?? null
 			)
 		},
 		client
@@ -384,7 +387,8 @@ const LOCAL_TOP_LEVEL_KEYS = new Set([
 export function providerConfigForLaunch(
 	provider: ComputeProvider,
 	gpuType: string | null,
-	runConfig?: Record<string, unknown> | null
+	runConfig?: Record<string, unknown> | null,
+	primeOffer?: PrimeOffer | null
 ): unknown {
 	const config = jsonObjectValue(provider.credentialsJson);
 	if (provider.providerType === 'local') {
@@ -417,11 +421,17 @@ export function providerConfigForLaunch(
 	if (!selectedGpu) return config;
 	if (provider.providerType === 'prime_intellect') {
 		const prime = recordOrNull(config?.primeIntellect) ?? recordOrNull(config?.prime_intellect) ?? {};
+		const envVars = recordOrNull(prime.envVars) ?? {};
 		return jsonObjectValue({
 			...config,
 			primeIntellect: {
 				...prime,
-				gpuType: selectedGpu
+				...(primeOffer ? primeOfferConfig(primeOffer) : {}),
+				gpuType: selectedGpu,
+				envVars: {
+					...envVars,
+					NUMERAI_RUN_CONFIG_JSON: JSON.stringify(runConfig ?? {})
+				}
 			}
 		});
 	}

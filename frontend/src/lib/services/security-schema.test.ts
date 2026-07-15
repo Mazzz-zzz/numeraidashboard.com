@@ -55,7 +55,7 @@ describe('credential schema hardening', () => {
 			'amplify/functions/cancel-training/handler.ts',
 			'amplify/functions/poll-training-status/handler.ts',
 			'amplify/functions/submit-model/handler.ts',
-			'amplify/functions/sync-prime-template/handler.ts',
+			'amplify/functions/fetch-prime-offers/handler.ts',
 			'amplify/functions/fetch-numerai-submissions/handler.ts',
 		]) {
 			const source = readFileSync(resolve(process.cwd(), handlerPath), 'utf8');
@@ -76,7 +76,7 @@ describe('credential schema hardening', () => {
 			'amplify/functions/submit-model/resource.ts',
 		]) {
 			const source = readFileSync(resolve(process.cwd(), resourcePath), 'utf8');
-			expect(source, resourcePath).toContain('modalFunctionEnvironment');
+			expect(source, resourcePath).toMatch(/modalFunctionEnvironment|trainingFunctionEnvironment/);
 		}
 	});
 

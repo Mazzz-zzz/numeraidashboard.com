@@ -216,6 +216,71 @@ describe('training function status transitions', () => {
 		});
 	});
 
+	it('terminates Prime pods after the worker completion marker', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify({
+				id: 'pod-1',
+				status: 'ACTIVE',
+				createdAt: '2026-05-23T14:45:00.000Z',
+				priceHr: 1,
+			}), { status: 200 }))
+			.mockResolvedValueOnce(new Response('NUMERAI_METRICS_JSON={"validationCorr":0.02}\nNUMERAI_DASHBOARD_TRAINING_COMPLETED', { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'TERMINATED' }), { status: 200 }));
+
+		const result = await pollTrainingJob({
+			runId: 'run-prime',
+			providerType: 'prime_intellect',
+			providerJobId: 'pod-1',
+			apiKey: 'test-token',
+			providerConfigJson: { primeIntellect: { maxRuntimeMinutes: 180 } },
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: true,
+			status: 'completed',
+			providerJobId: 'pod-1',
+			metricsJson: expect.objectContaining({ validationCorr: 0.02 }),
+		});
+		expect(fetchSpy).toHaveBeenLastCalledWith(
+			'https://api.primeintellect.ai/api/v1/pods/pod-1',
+			expect.objectContaining({ method: 'DELETE' })
+		);
+		fetchSpy.mockRestore();
+	});
+
+	it('terminates Prime pods that exceed the configured runtime limit', async () => {
+		const fetchSpy = vi
+			.spyOn(globalThis, 'fetch')
+			.mockResolvedValueOnce(new Response(JSON.stringify({
+				id: 'pod-timeout',
+				status: 'ACTIVE',
+				createdAt: '2026-05-23T13:00:00.000Z',
+				priceHr: 0.5,
+			}), { status: 200 }))
+			.mockResolvedValueOnce(new Response('still training', { status: 200 }))
+			.mockResolvedValueOnce(new Response(JSON.stringify({ status: 'TERMINATED' }), { status: 200 }));
+
+		const result = await pollTrainingJob({
+			runId: 'run-prime',
+			providerType: 'prime_intellect',
+			providerJobId: 'pod-timeout',
+			apiKey: 'test-token',
+			providerConfigJson: { primeIntellect: { maxRuntimeMinutes: 60 } },
+			checkedAt,
+		});
+
+		expect(result).toMatchObject({
+			ok: false,
+			status: 'failed',
+			providerJobId: 'pod-timeout',
+			error: 'Prime Intellect training exceeded its 60 minute runtime limit.',
+		});
+		expect(fetchSpy).toHaveBeenCalledTimes(3);
+		fetchSpy.mockRestore();
+	});
+
 	it('validates required identifiers before returning state transitions', async () => {
 		expect(
 			await pollTrainingJob({

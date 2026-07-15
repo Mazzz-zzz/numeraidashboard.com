@@ -6,6 +6,7 @@
 	import { listComputeJobs, listComputeProviders, type ComputeJob, type ComputeProvider } from '$lib/services/compute-service';
 	import { launchModelDraft, launchTrainingToast, refreshModelTraining } from '$lib/services/model-launch-service';
 	import { gpuOptionsForProvider, selectedGpuForProvider } from '$lib/services/provider-gpu-catalog';
+	import { fetchPrimeOffers, type PrimeOffer } from '$lib/services/prime-offers-service';
 	import {
 		fetchLocalDaemonHealth,
 		setLocalDaemonMaxParallel,
@@ -33,6 +34,11 @@
 	let jobs = $state<ComputeJob[]>([]);
 	let selectedProviderId = $state('');
 	let selectedGpuType = $state('');
+	let primeOffers = $state<PrimeOffer[]>([]);
+	let selectedPrimeOfferId = $state('');
+	let primeOffersLoading = $state(false);
+	let primeOffersError = $state<string | null>(null);
+	let primeOffersRequest = 0;
 	let autoRefreshing = $state(false);
 	let now = $state(new Date());
 	let localHealth = $state<LocalDaemonHealth | null>(null);
@@ -53,6 +59,7 @@
 	);
 	const localGb = (mb?: number) => (mb ? (mb / 1024).toFixed(1) : '0.0');
 	const gpuOptions = $derived(gpuOptionsForProvider(selectedProvider));
+	const selectedPrimeOffer = $derived(primeOffers.find((offer) => offer.id === selectedPrimeOfferId) ?? null);
 	const launchModels = $derived(
 		models.filter((model) => model.stage === 'draft' || model.stage === 'training' || model.stage === 'failed' || model.stage === 'success')
 	);
@@ -96,6 +103,40 @@
 		if ((selected?.value ?? '') !== selectedGpuType) selectedGpuType = selected?.value ?? '';
 	});
 
+	$effect(() => {
+		const provider = selectedProvider;
+		const gpuType = selectedGpuType;
+		if (provider?.providerType !== 'prime_intellect' || !gpuType) {
+			primeOffers = [];
+			selectedPrimeOfferId = '';
+			primeOffersError = null;
+			return;
+		}
+		void loadPrimeOffers(provider, gpuType);
+	});
+
+	async function loadPrimeOffers(provider: ComputeProvider, gpuType: string) {
+		const request = ++primeOffersRequest;
+		primeOffersLoading = true;
+		primeOffersError = null;
+		try {
+			const offers = await fetchPrimeOffers(provider, gpuType);
+			if (request !== primeOffersRequest) return;
+			primeOffers = offers;
+			selectedPrimeOfferId = offers.some((offer) => offer.id === selectedPrimeOfferId)
+				? selectedPrimeOfferId
+				: offers[0]?.id ?? '';
+			if (!offers.length) primeOffersError = `No live ${gpuType} offers are available.`;
+		} catch (error) {
+			if (request !== primeOffersRequest) return;
+			primeOffers = [];
+			selectedPrimeOfferId = '';
+			primeOffersError = error instanceof Error ? error.message : 'Prime availability could not be loaded.';
+		} finally {
+			if (request === primeOffersRequest) primeOffersLoading = false;
+		}
+	}
+
 	async function load() {
 		loading = true;
 		try {
@@ -121,6 +162,10 @@
 			addToast('Select a compute provider first.', 'error');
 			return;
 		}
+		if (selectedProvider.providerType === 'prime_intellect' && !selectedPrimeOffer) {
+			addToast(primeOffersError ?? 'Select an available Prime Intellect offer first.', 'error');
+			return;
+		}
 		if (isPending(model.id)) return;
 		setPending(model.id, true);
 		try {
@@ -128,7 +173,8 @@
 				model,
 				provider: selectedProvider,
 				maxSpendUsd: null,
-				gpuType: selectedGpuType || null
+				gpuType: selectedGpuType || null,
+				primeOffer: selectedPrimeOffer
 			});
 			upsertModel(result.model);
 			upsertJob(result.job);
@@ -261,7 +307,9 @@
 	}
 
 	function canLaunch(model: ModelRegistryItem): boolean {
-		return !!selectedProvider && (model.stage === 'draft' || model.stage === 'failed');
+		return !!selectedProvider &&
+			(selectedProvider.providerType !== 'prime_intellect' || !!selectedPrimeOffer) &&
+			(model.stage === 'draft' || model.stage === 'failed');
 	}
 </script>
 
@@ -296,6 +344,23 @@
 						{/each}
 					</select>
 				</label>
+				{#if selectedProvider?.providerType === 'prime_intellect'}
+					<label>
+						<span>Live offer</span>
+						<select bind:value={selectedPrimeOfferId} disabled={primeOffersLoading || !primeOffers.length}>
+							{#if primeOffersLoading}
+								<option value="">Loading availability…</option>
+							{:else}
+								{#each primeOffers as offer (offer.id)}
+									<option value={offer.id}>
+										${offer.priceHr.toFixed(2)}/hr · {offer.providerType} · {offer.country ?? offer.region ?? 'region n/a'}
+									</option>
+								{/each}
+							{/if}
+						</select>
+						{#if primeOffersError}<small class="offer-error">{primeOffersError}</small>{/if}
+					</label>
+				{/if}
 			</div>
 		</header>
 
@@ -580,10 +645,17 @@
 
 	.launch-controls {
 		display: grid;
-		grid-template-columns: minmax(220px, 1fr) 140px;
+		grid-template-columns: minmax(190px, 1fr) 140px minmax(260px, 1.4fr);
 		gap: 0.75rem;
 		align-items: end;
-		min-width: min(100%, 430px);
+		min-width: min(100%, 720px);
+	}
+
+	.offer-error {
+		max-width: 320px;
+		color: var(--red);
+		font-size: 0.72rem;
+		line-height: 1.3;
 	}
 
 	label {
