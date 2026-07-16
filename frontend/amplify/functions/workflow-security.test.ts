@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	ownedSecretRef,
 	requireCallerSub,
+	requireWorkflowOwner,
 	secretPath,
 	secureProviderRuntimeArgs,
 	trustedProviderConfig,
@@ -16,6 +17,24 @@ describe('workflow security boundary', () => {
 		expect(() => requireCallerSub({ identity: { sub: '../shared' } })).toThrow(
 			'Authenticated caller identity is required'
 		);
+	});
+
+	it('accepts an owner override only for IAM resource callers', () => {
+		expect(
+			requireWorkflowOwner({
+				identity: { accountId: '123456789012', userArn: 'arn:aws:sts::123456789012:assumed-role/mcp' },
+				arguments: { ownerSub: 'user-1' },
+			})
+		).toBe('user-1');
+		expect(
+			requireWorkflowOwner({
+				identity: { sub: 'user-2', claims: { sub: 'user-2' }, accountId: '123456789012' },
+				arguments: { ownerSub: 'user-1' },
+			})
+		).toBe('user-2');
+		expect(() =>
+			requireWorkflowOwner({ identity: { sourceIp: ['127.0.0.1'] }, arguments: { ownerSub: 'user-1' } })
+		).toThrow('Authenticated caller identity is required');
 	});
 
 	it('accepts only SSM references within the caller namespace', () => {

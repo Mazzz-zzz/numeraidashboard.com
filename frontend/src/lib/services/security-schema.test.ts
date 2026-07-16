@@ -37,9 +37,11 @@ describe('credential schema hardening', () => {
 	});
 
 	it('retains owner authorization on sensitive workflow records', () => {
-		for (const model of ['ModelSubmission', 'TrainingRun', 'ComputeJob']) {
+		for (const model of ['ModelSubmission', 'TrainingRun', 'ComputeJob', 'ApiKey']) {
 			expect(modelBlock(model)).toContain('allow.owner()');
 		}
+		expect(modelBlock('ApiKey')).toContain('keyHash: a.string().required()');
+		expect(modelBlock('ApiKey')).not.toContain('rawKey');
 	});
 
 	it('scopes Lambda SSM permissions to the dashboard parameter namespace', () => {
@@ -51,9 +53,6 @@ describe('credential schema hardening', () => {
 		for (const handlerPath of [
 			'amplify/functions/verify-numerai-account/handler.ts',
 			'amplify/functions/verify-compute-provider/handler.ts',
-			'amplify/functions/start-training/handler.ts',
-			'amplify/functions/cancel-training/handler.ts',
-			'amplify/functions/poll-training-status/handler.ts',
 			'amplify/functions/submit-model/handler.ts',
 			'amplify/functions/fetch-prime-offers/handler.ts',
 			'amplify/functions/fetch-numerai-submissions/handler.ts',
@@ -61,6 +60,25 @@ describe('credential schema hardening', () => {
 			const source = readFileSync(resolve(process.cwd(), handlerPath), 'utf8');
 			expect(source, handlerPath).toContain('requireCallerSub');
 		}
+		for (const handlerPath of [
+			'amplify/functions/start-training/handler.ts',
+			'amplify/functions/cancel-training/handler.ts',
+			'amplify/functions/poll-training-status/handler.ts',
+		]) {
+			const source = readFileSync(resolve(process.cwd(), handlerPath), 'utf8');
+			expect(source, handlerPath).toContain('requireWorkflowOwner');
+		}
+	});
+
+	it('protects the public MCP function URL with handler-level API-key auth', () => {
+		const handlerSource = readFileSync(
+			resolve(process.cwd(), 'amplify/functions/mcp-server/handler.ts'),
+			'utf8'
+		);
+		expect(backendSource).toContain('backend.mcpServer.resources.lambda.addFunctionUrl');
+		expect(backendSource).toContain('FunctionUrlAuthType.NONE');
+		expect(handlerSource).toContain("header(event.headers, 'x-api-key')");
+		expect(handlerSource).toContain('controlPlane.authenticate');
 	});
 
 	it('keeps operator Modal infrastructure out of source defaults', () => {

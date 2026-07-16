@@ -7,12 +7,13 @@
     "build": "vite build",
     "test": "vitest run",
     "preview": "vite preview",
+    "mcp:key": "node scripts/create-mcp-key.mjs",
     "sandbox": "ampx sandbox",
     "sandbox:once": "ampx sandbox --once"
   },
   "devDependencies": {
-    "@aws-amplify/backend": "^1.22.0",
-    "@aws-amplify/backend-cli": "^1.8.2",
+    "@aws-amplify/backend": "^1.23.0",
+    "@aws-amplify/backend-cli": "^1.8.3",
     "@sveltejs/adapter-static": "^3.0.0",
     "@sveltejs/kit": "^2.0.0",
     "@sveltejs/vite-plugin-svelte": "^4.0.0",
@@ -27,10 +28,12 @@
     "@aws-sdk/client-ssm": "^3.1053.0",
     "@aws-sdk/s3-request-presigner": "3.1053.0",
     "@lucide/svelte": "^1.24.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@xyflow/svelte": "^1.5.2",
     "aws-amplify": "^6.17.0",
     "lightweight-charts": "^4.2.0",
-    "plotly.js-dist-min": "^2.29.0"
+    "plotly.js-dist-min": "^2.29.0",
+    "zod": "^3.25.17"
   },
   "type": "module"
 }

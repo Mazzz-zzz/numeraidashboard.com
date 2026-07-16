@@ -8,6 +8,7 @@ import { submitModel } from '../functions/submit-model/resource';
 import { refreshRoundMetrics } from '../functions/refresh-round-metrics/resource';
 import { fetchPrimeOffers } from '../functions/fetch-prime-offers/resource';
 import { fetchNumeraiSubmissions } from '../functions/fetch-numerai-submissions/resource';
+import { mcpServer } from '../functions/mcp-server/resource';
 
 const schema = a.schema({
 	Pipeline: a
@@ -169,6 +170,17 @@ const schema = a.schema({
 		})
 		.authorization((allow) => [allow.owner()]),
 
+	ApiKey: a
+		.model({
+			name: a.string().required(),
+			keyHash: a.string().required(),
+			keyPrefix: a.string().required(),
+			lastUsedAt: a.datetime(),
+			revokedAt: a.datetime(),
+		})
+		.secondaryIndexes((index) => [index('keyHash').queryField('apiKeyByHash')])
+		.authorization((allow) => [allow.owner()]),
+
 	VerifyResult: a.customType({
 		ok: a.boolean().required(),
 		verifiedAt: a.datetime(),
@@ -275,6 +287,7 @@ const schema = a.schema({
 			baseUrl: a.string(),
 			workspaceId: a.string(),
 			providerConfigJson: a.json(),
+			ownerSub: a.string(),
 		})
 		.returns(a.ref('TrainingActionResult'))
 		.authorization((allow) => [allow.authenticated()])
@@ -292,6 +305,7 @@ const schema = a.schema({
 			baseUrl: a.string(),
 			workspaceId: a.string(),
 			providerConfigJson: a.json(),
+			ownerSub: a.string(),
 		})
 		.returns(a.ref('TrainingActionResult'))
 		.authorization((allow) => [allow.authenticated()])
@@ -309,6 +323,7 @@ const schema = a.schema({
 			baseUrl: a.string(),
 			workspaceId: a.string(),
 			providerConfigJson: a.json(),
+			ownerSub: a.string(),
 		})
 		.returns(a.ref('TrainingActionResult'))
 		.authorization((allow) => [allow.authenticated()])
@@ -373,7 +388,7 @@ const schema = a.schema({
 		.returns(a.ref('NumeraiSubmissionsResult'))
 		.authorization((allow) => [allow.authenticated()])
 		.handler(a.handler.function(fetchNumeraiSubmissions)),
-});
+}).authorization((allow) => [allow.resource(mcpServer).to(['query', 'mutate'])]);
 
 export type Schema = ClientSchema<typeof schema>;
 

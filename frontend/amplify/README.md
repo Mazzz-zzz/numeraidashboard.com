@@ -70,6 +70,43 @@ a pod from a configured custom template, `pollTrainingStatus` reads pod state an
 logs, and `cancelTraining` deletes the pod. Real Modal/SageMaker calls should be
 added inside these handlers.
 
+## Hosted MCP endpoint
+
+`functions/mcp-server/` exposes a stateless, JSON-response Streamable HTTP MCP
+server through an Amplify-managed Lambda Function URL. The deployed URL is
+written to `amplify_outputs.json` as `custom.mcpUrl`. Every request must use
+`X-API-Key`; only the SHA-256 key hash and a display prefix are stored in the
+owner-scoped `ApiKey` model.
+
+Generate a key locally:
+
+```sh
+cd frontend
+npm run mcp:key
+```
+
+Save `keyHash`, `keyPrefix`, a label in `name`, and the Cognito owner value in an
+`ApiKey` row using Amplify Data Manager. The owner value must be
+`<cognito-sub>::<username>` (or the subject alone). Keep `rawKey` in the MCP
+client; it is shown only by the generator and cannot be recovered from Odoo,
+Amplify, or DynamoDB. Set `revokedAt` to disable a key immediately.
+
+Configure a remote MCP client with the deployed URL and header:
+
+```json
+{
+  "url": "https://example.lambda-url.region.on.aws/",
+  "headers": { "X-API-Key": "nd_mcp_..." }
+}
+```
+
+Tools are `list_training_runs`, `launch_training_run`,
+`poll_training_status`, `cancel_run`, and `list_submissions`. The Lambda has IAM
+access to the Data API, but each read and write is checked again against the API
+key owner's Cognito subject before provider credentials or workflow rows are
+used. Local Mac daemon logs remain snapshots from `ComputeJob.logTail`; the
+hosted Lambda does not connect directly to a workstation.
+
 ## Modal Worker Deployment
 
 Modal launch, status, and cancel are coupled to the web endpoints in
@@ -102,12 +139,14 @@ function folder name:
 - `poll-training-status`
 - `submit-model`
 - `refresh-round-metrics`
+- `mcp-server`
 
 When data looks wrong, inspect the corresponding Amplify Data table/model:
 
 - connection setup: `NumeraiAccount`, `ComputeProvider`
 - builder state: `Pipeline`, `ModelBranch`, `SweepPlan`
 - workload state: `TrainingRun`, `ComputeJob`
+- remote control: `ApiKey`
 - model/submission state: `ModelRegistryItem`, `ModelSubmission`, `RoundDataset`
 
 ## Current limitations

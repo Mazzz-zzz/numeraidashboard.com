@@ -1,6 +1,7 @@
 import { defineBackend } from '@aws-amplify/backend';
-import { Stack } from 'aws-cdk-lib';
+import { Duration, Stack } from 'aws-cdk-lib';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
+import { FunctionUrlAuthType, HttpMethod } from 'aws-cdk-lib/aws-lambda';
 import { auth } from './auth/resource';
 import { data } from './data/resource';
 import { verifyNumeraiAccount } from './functions/verify-numerai-account/resource';
@@ -12,6 +13,7 @@ import { submitModel } from './functions/submit-model/resource';
 import { refreshRoundMetrics } from './functions/refresh-round-metrics/resource';
 import { fetchPrimeOffers } from './functions/fetch-prime-offers/resource';
 import { fetchNumeraiSubmissions } from './functions/fetch-numerai-submissions/resource';
+import { mcpServer } from './functions/mcp-server/resource';
 
 const backend = defineBackend({
 	auth,
@@ -25,6 +27,29 @@ const backend = defineBackend({
 	refreshRoundMetrics,
 	fetchPrimeOffers,
 	fetchNumeraiSubmissions,
+	mcpServer,
+});
+
+const mcpFunctionUrl = backend.mcpServer.resources.lambda.addFunctionUrl({
+	authType: FunctionUrlAuthType.NONE,
+	cors: {
+		allowedOrigins: ['*'],
+		allowedMethods: [HttpMethod.POST],
+		allowedHeaders: [
+			'content-type',
+			'x-api-key',
+			'mcp-protocol-version',
+			'mcp-session-id',
+		],
+		exposedHeaders: ['mcp-protocol-version', 'mcp-session-id'],
+		maxAge: Duration.hours(1),
+	},
+});
+
+backend.addOutput({
+	custom: {
+		mcpUrl: mcpFunctionUrl.url,
+	},
 });
 
 const secretParameterArn = Stack.of(backend.verifyNumeraiAccount.resources.lambda).formatArn({
@@ -52,6 +77,7 @@ backend.cancelTraining.resources.lambda.addToRolePolicy(secretReadPolicy);
 backend.fetchPrimeOffers.resources.lambda.addToRolePolicy(secretReadPolicy);
 backend.submitModel.resources.lambda.addToRolePolicy(secretReadPolicy);
 backend.fetchNumeraiSubmissions.resources.lambda.addToRolePolicy(secretReadPolicy);
+backend.mcpServer.resources.lambda.addToRolePolicy(secretReadPolicy);
 
 const artifactBucketName = process.env.ML_ARTIFACT_BUCKET?.trim();
 if (artifactBucketName) {

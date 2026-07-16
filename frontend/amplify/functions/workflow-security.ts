@@ -7,6 +7,10 @@ type IdentityEvent = {
 	readonly identity?: unknown;
 };
 
+type WorkflowOwnerEvent = IdentityEvent & {
+	readonly arguments?: { readonly ownerSub?: string | null };
+};
+
 type ProviderRuntimeInput = {
 	readonly providerType?: string | null;
 	readonly apiKey?: string | null;
@@ -25,6 +29,24 @@ export function requireCallerSub(event: IdentityEvent): string {
 		throw new Error('Authenticated caller identity is required.');
 	}
 	return sub;
+}
+
+/**
+ * Cognito callers always use their own subject. Resource-authorized internal
+ * callers (the hosted MCP Lambda) must explicitly pass the already-authenticated
+ * API-key owner because IAM identities do not contain a Cognito subject.
+ */
+export function requireWorkflowOwner(event: WorkflowOwnerEvent): string {
+	try {
+		return requireCallerSub(event);
+	} catch {
+		const identity = asRecord(event.identity);
+		const ownerSub = event.arguments?.ownerSub?.trim();
+		if (!isIamIdentity(identity) || !validOwnerSub(ownerSub)) {
+			throw new Error('Authenticated caller identity is required.');
+		}
+		return ownerSub;
+	}
 }
 
 export function ownedSecretRef(
@@ -145,6 +167,17 @@ function disallowedTlsPort(port: string): boolean {
 
 function safePathSegment(value: string): boolean {
 	return /^[a-z0-9-]+$/i.test(value);
+}
+
+function validOwnerSub(value: string | null | undefined): value is string {
+	return Boolean(value && /^[a-z0-9._:@+-]{1,128}$/i.test(value) && value !== '.' && value !== '..');
+}
+
+function isIamIdentity(identity: Record<string, unknown> | null): boolean {
+	return Boolean(
+		identity &&
+			(stringValue(identity.accountId) || stringValue(identity.userArn))
+	);
 }
 
 function normalizedHostname(value: string): string {
