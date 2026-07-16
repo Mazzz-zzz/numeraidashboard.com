@@ -27,7 +27,7 @@ The `ml/` package remains useful for workload execution:
 
 - downloading Numerai datasets with `numerapi`
 - feature engineering and neutralization
-- LightGBM/CatBoost training
+- LightGBM/XGBoost/CatBoost training
 - validation metrics
 - inference and submission CSV generation
 - SageMaker/container entry points used by provider workers
@@ -54,9 +54,9 @@ pip install -r requirements.txt
 python3 -m training.trainer --feature-set small --output ./output
 ```
 
-### macOS: libomp (required for LightGBM)
+### macOS: libomp (required for LightGBM and XGBoost)
 
-LightGBM needs the **libomp** system library (the OpenMP runtime), which pip
+LightGBM and XGBoost need the **libomp** system library (the OpenMP runtime), which pip
 cannot install. On macOS:
 
 ```bash
@@ -64,14 +64,14 @@ brew install libomp        # standard install
 ```
 
 If you don't use Homebrew but have torch installed (for the neural/MPS models),
-run the bundled helper — it points LightGBM at torch's own libomp, no brew
-needed:
+run the bundled helper — it points both LightGBM and XGBoost at torch's own
+libomp, no brew needed:
 
 ```bash
 PY=python3 ml/local/setup_libomp.sh
 ```
 
-libomp is **only** needed for LightGBM. The neural models (MLP, TabM,
+libomp is only needed for the native boosting models. The neural models (MLP, TabM,
 FT-Transformer, ModernNCA) and foundation models (TabPFN, TabICL) don't need it,
 and run on the Apple Silicon (MPS) GPU automatically.
 

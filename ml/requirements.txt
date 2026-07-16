@@ -4,6 +4,7 @@
 # to point LightGBM at torch's bundled libomp. Not needed for the neural (MPS)
 # models below.
 lightgbm>=4.0.0
+xgboost==3.2.0
 numerapi==2.18.0
 # numerapi 2.18 imports pkg_resources, which setuptools removed in newer releases.
 setuptools<81

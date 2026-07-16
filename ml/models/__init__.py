@@ -16,6 +16,11 @@ except Exception:
     LightGBMModel = None
 
 try:
+    from models.xgboost_model import XGBoostModel
+except ImportError:
+    XGBoostModel = None
+
+try:
     from models.catboost_model import CatBoostModel
 except ImportError:
     CatBoostModel = None
@@ -66,10 +71,10 @@ def create_model(
     """Factory function to create a model instance by type.
     
     Args:
-        model_type: "lgbm" or "catboost"
-        num_leaves: LightGBM num_leaves (used for LGBM only)
-        max_depth: Max tree depth (used for both)
-        learning_rate: Learning rate (used for both)
+        model_type: Model implementation identifier.
+        num_leaves: LightGBM num_leaves.
+        max_depth: Tree depth cap for boosting models.
+        learning_rate: Learning rate.
         n_estimators: Number of boosting rounds/iterations
         feature_fraction: LightGBM feature_fraction (column sampling)
         bagging_fraction: LightGBM bagging_fraction (row sampling)
@@ -104,6 +109,22 @@ def create_model(
             **kwargs,
         )
     
+    elif model_type == "xgboost":
+        if XGBoostModel is None:
+            raise RuntimeError(
+                "XGBoost not installed. "
+                "Install with: pip install xgboost==3.2.0"
+            )
+        return XGBoostModel(
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            max_depth=max_depth,
+            feature_fraction=feature_fraction,
+            bagging_fraction=bagging_fraction,
+            early_stopping_rounds=early_stopping_rounds,
+            **kwargs,
+        )
+
     elif model_type == "catboost":
         if CatBoostModel is None:
             raise RuntimeError(
@@ -228,7 +249,7 @@ def create_model(
     else:
         raise ValueError(
             f"Unknown model_type: {model_type}. "
-            f"Supported types: lgbm, catboost, mlp, ft_transformer, "
+            f"Supported types: lgbm, xgboost, catboost, mlp, ft_transformer, "
             f"modern_nca, tabm, tabpfn, tabicl"
         )
 
@@ -238,6 +259,8 @@ def list_available_models() -> list[str]:
     models = []
     if LightGBMModel is not None:
         models.append("lgbm")
+    if XGBoostModel is not None:
+        models.append("xgboost")
     if CatBoostModel is not None:
         models.append("catboost")
     if MLPModel is not None:

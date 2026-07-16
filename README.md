@@ -53,7 +53,7 @@ into one workspace while keeping the executable ML workload available as regular
 - Launch, poll, and cancel supported cloud jobs through Amplify Functions.
 - Track compute jobs, model registry entries, lineage, and submission history.
 - Read live Numerai account and per-round submission data.
-- Run the Python workload independently with LightGBM, CatBoost, neural models, TabPFN, or TabICL.
+- Run the Python workload independently with LightGBM, XGBoost, CatBoost, neural models, TabPFN, or TabICL.
 - Deploy the control plane with AWS Amplify Gen 2, Cognito, AppSync, Lambda, DynamoDB, and SSM.
 - Control owned training runs remotely through an API-key-authenticated, stateless MCP endpoint.
 
