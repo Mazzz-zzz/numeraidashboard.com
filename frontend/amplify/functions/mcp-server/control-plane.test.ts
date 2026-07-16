@@ -23,10 +23,7 @@ describe('MCP control-plane security', () => {
 		const update = vi.fn().mockResolvedValue({ data: { id: 'key-1' } });
 		const plane = new McpControlPlane({ models: { ApiKey: { apiKeyByHash, update } } } as never);
 
-		await expect(plane.authenticate(rawKey)).resolves.toEqual({
-			apiKeyId: 'key-1',
-			ownerSub: 'user-1',
-		});
+		await expect(plane.authenticate(rawKey)).resolves.toEqual({ ownerSub: 'user-1' });
 		expect(apiKeyByHash).toHaveBeenCalledWith({
 			keyHash: hashMcpApiKey(rawKey),
 		});
@@ -56,7 +53,7 @@ describe('MCP control-plane security', () => {
 		});
 		const plane = new McpControlPlane({ models: { TrainingRun: { list } } } as never);
 		const runs = await plane.listTrainingRuns(
-			{ apiKeyId: 'key-1', ownerSub: 'user-1' },
+			{ ownerSub: 'user-1' },
 			{ status: 'queued', limit: 500 }
 		);
 
@@ -131,7 +128,7 @@ describe('MCP control-plane security', () => {
 		const plane = new McpControlPlane(client as never);
 
 		const result = await plane.launchTrainingRun(
-			{ apiKeyId: 'key-1', ownerSub: 'user-1' },
+			{ ownerSub: 'user-1' },
 			{ runId: 'run-1' }
 		);
 

@@ -1,5 +1,6 @@
 import { defineBackend } from '@aws-amplify/backend';
 import { Duration, Stack } from 'aws-cdk-lib';
+import { CfnUserPoolClient, CfnUserPoolDomain } from 'aws-cdk-lib/aws-cognito';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { FunctionUrlAuthType, HttpMethod } from 'aws-cdk-lib/aws-lambda';
 import { auth } from './auth/resource';
@@ -34,9 +35,10 @@ const mcpFunctionUrl = backend.mcpServer.resources.lambda.addFunctionUrl({
 	authType: FunctionUrlAuthType.NONE,
 	cors: {
 		allowedOrigins: ['*'],
-		allowedMethods: [HttpMethod.POST],
+		allowedMethods: [HttpMethod.GET, HttpMethod.POST],
 		allowedHeaders: [
 			'content-type',
+			'authorization',
 			'x-api-key',
 			'mcp-protocol-version',
 			'mcp-session-id',
@@ -46,9 +48,43 @@ const mcpFunctionUrl = backend.mcpServer.resources.lambda.addFunctionUrl({
 	},
 });
 
+const authStack = Stack.of(backend.auth.resources.userPool);
+const mcpOAuthDomainPrefix = 'numeraidashboard-mcp-dald5tic4n22y';
+new CfnUserPoolDomain(authStack, 'McpOAuthDomain', {
+	domain: mcpOAuthDomainPrefix,
+	userPoolId: backend.auth.resources.userPool.userPoolId,
+});
+const mcpOAuthClient = new CfnUserPoolClient(authStack, 'McpOAuthClient', {
+	userPoolId: backend.auth.resources.userPool.userPoolId,
+	clientName: 'numeraidashboard-claude-mcp',
+	generateSecret: false,
+	allowedOAuthFlowsUserPoolClient: true,
+	allowedOAuthFlows: ['code'],
+	allowedOAuthScopes: ['openid'],
+	callbackUrLs: ['https://claude.ai/api/mcp/auth_callback'],
+	supportedIdentityProviders: ['COGNITO'],
+	preventUserExistenceErrors: 'ENABLED',
+	enableTokenRevocation: true,
+	accessTokenValidity: 60,
+	idTokenValidity: 60,
+	refreshTokenValidity: 30,
+	tokenValidityUnits: {
+		accessToken: 'minutes',
+		idToken: 'minutes',
+		refreshToken: 'days',
+	},
+});
+backend.mcpServer.resources.lambda.addEnvironment('MCP_OAUTH_CLIENT_ID', mcpOAuthClient.ref);
+
+const cognitoIssuer = `https://cognito-idp.${authStack.region}.${authStack.urlSuffix}/${backend.auth.resources.userPool.userPoolId}`;
+const cognitoDomain = `https://${mcpOAuthDomainPrefix}.auth.${authStack.region}.amazoncognito.com`;
+
 backend.addOutput({
 	custom: {
 		mcpUrl: mcpFunctionUrl.url,
+		mcpOAuthClientId: mcpOAuthClient.ref,
+		mcpOAuthAuthorizationServer: cognitoIssuer,
+		mcpOAuthDomain: cognitoDomain,
 	},
 });
 
