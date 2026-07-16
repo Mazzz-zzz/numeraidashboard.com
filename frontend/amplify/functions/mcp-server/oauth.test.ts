@@ -11,7 +11,7 @@ const config = {
 
 describe('MCP OAuth authentication', () => {
 	it('accepts a verified Cognito access token from the dedicated MCP client', async () => {
-		const verify = vi.fn().mockResolvedValue({ sub: 'user-1' });
+		const verify = vi.fn().mockResolvedValue({ sub: 'user-1', client_id: 'claude-client' });
 		const oauth = new McpOAuthAuthenticator(config, { verify });
 
 		await expect(oauth.authenticate('Bearer signed-token', resourceUrl)).resolves.toEqual({
@@ -25,7 +25,11 @@ describe('MCP OAuth authentication', () => {
 			verify: vi.fn().mockRejectedValue(new Error('invalid signature')),
 		});
 		const wrongAudience = new McpOAuthAuthenticator(config, {
-			verify: vi.fn().mockResolvedValue({ sub: 'user-1', aud: 'https://other.example.com/' }),
+			verify: vi.fn().mockResolvedValue({
+				sub: 'user-1',
+				client_id: 'claude-client',
+				aud: 'https://other.example.com/',
+			}),
 		});
 
 		await expect(invalid.authenticate('Bearer invalid', resourceUrl)).resolves.toBeNull();
@@ -33,10 +37,24 @@ describe('MCP OAuth authentication', () => {
 		await expect(wrongAudience.authenticate('Basic credentials', resourceUrl)).resolves.toBeNull();
 	});
 
+	it('accepts a verified token from a dynamically registered ChatGPT client', async () => {
+		const isAllowedClientId = vi.fn().mockResolvedValue(true);
+		const oauth = new McpOAuthAuthenticator(
+			{ ...config, isAllowedClientId },
+			{ verify: vi.fn().mockResolvedValue({ sub: 'user-1', client_id: 'chatgpt-client' }) }
+		);
+
+		await expect(oauth.authenticate('Bearer signed-token', resourceUrl)).resolves.toEqual({
+			ownerSub: 'user-1',
+		});
+		expect(isAllowedClientId).toHaveBeenCalledWith('chatgpt-client');
+	});
+
 	it('publishes protected-resource metadata and an OAuth discovery challenge', () => {
 		const oauth = new McpOAuthAuthenticator(config, {
 			verify: vi.fn(),
 		});
+
 
 		expect(oauth.protectedResourceMetadata(resourceUrl)).toEqual({
 			resource: resourceUrl,

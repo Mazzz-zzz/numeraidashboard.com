@@ -61,7 +61,10 @@ const mcpOAuthClient = new CfnUserPoolClient(authStack, 'McpOAuthClient', {
 	allowedOAuthFlowsUserPoolClient: true,
 	allowedOAuthFlows: ['code'],
 	allowedOAuthScopes: ['openid'],
-	callbackUrLs: ['https://claude.ai/api/mcp/auth_callback'],
+	callbackUrLs: [
+		'https://claude.ai/api/mcp/auth_callback',
+		'https://chatgpt.com/connector_platform_oauth_redirect',
+	],
 	supportedIdentityProviders: ['COGNITO'],
 	preventUserExistenceErrors: 'ENABLED',
 	enableTokenRevocation: true,
@@ -82,6 +85,10 @@ backend.mcpServer.resources.lambda.addEnvironment(
 
 const cognitoIssuer = `https://cognito-idp.${authStack.region}.${authStack.urlSuffix}/${backend.auth.resources.userPool.userPoolId}`;
 const cognitoDomain = `https://${mcpOAuthDomainPrefix}.auth.${authStack.region}.amazoncognito.com`;
+backend.mcpServer.resources.lambda.addToRolePolicy(new PolicyStatement({
+	actions: ['cognito-idp:CreateUserPoolClient', 'cognito-idp:DescribeUserPoolClient'],
+	resources: [backend.auth.resources.userPool.userPoolArn],
+}));
 
 backend.addOutput({
 	custom: {
@@ -89,6 +96,7 @@ backend.addOutput({
 		mcpOAuthClientId: mcpOAuthClient.ref,
 		mcpOAuthAuthorizationServer: cognitoIssuer,
 		mcpOAuthDomain: cognitoDomain,
+		mcpOAuthRegistrationUrl: `${mcpFunctionUrl.url}oauth/register`,
 	},
 });
 
