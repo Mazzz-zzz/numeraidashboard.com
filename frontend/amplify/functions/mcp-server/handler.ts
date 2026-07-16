@@ -8,6 +8,7 @@ import { env } from '$amplify/env/mcp-server';
 import type { Schema } from '../../data/resource';
 import { McpControlPlane, type McpDataClient, type McpPrincipal } from './control-plane';
 import { McpOAuthAuthenticator } from './oauth';
+import { McpOAuthClientRegistry, OAuthRegistrationError } from './oauth-registration';
 
 type FunctionUrlEvent = {
 	readonly body?: string | null;
@@ -38,10 +39,12 @@ const userPoolId = process.env.MCP_OAUTH_USER_POOL_ID;
 const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
 if (!userPoolId || !oauthClientId) throw new Error('MCP OAuth configuration is incomplete');
 const cognitoRegion = userPoolId.split('_', 1)[0];
+const oauthClients = new McpOAuthClientRegistry(userPoolId);
 const oauth = new McpOAuthAuthenticator({
 	userPoolId,
 	clientId: oauthClientId,
 	authorizationServer: `https://cognito-idp.${cognitoRegion}.amazonaws.com/${userPoolId}`,
+	isAllowedClientId: (clientId) => oauthClients.isRegisteredClient(clientId),
 });
 
 type McpToolResult = {
@@ -65,6 +68,9 @@ export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResul
 	const path = (event.rawPath || '/').replace(/\/+$/, '') || '/';
 	if (method === 'GET' && path === '/.well-known/oauth-protected-resource') {
 		return jsonResponse(200, oauth.protectedResourceMetadata(resource));
+	}
+	if (method === 'POST' && path === '/oauth/register') {
+		return registerOAuthClient(event);
 	}
 	if (method !== 'POST') return methodNotAllowed();
 
@@ -102,6 +108,35 @@ export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResul
 		await server.close().catch(() => undefined);
 	}
 };
+
+async function registerOAuthClient(event: FunctionUrlEvent): Promise<FunctionUrlResult> {
+	let body: unknown;
+	try {
+		body = JSON.parse(decodedBody(event));
+	} catch {
+		return jsonResponse(400, {
+			error: 'invalid_client_metadata',
+			error_description: 'Registration body must be valid JSON.',
+		});
+	}
+	try {
+		return jsonResponse(201, await oauthClients.register(body));
+	} catch (error) {
+		if (error instanceof OAuthRegistrationError) {
+			return jsonResponse(400, { error: error.code, error_description: error.message });
+		}
+		console.error('MCP OAuth client registration failed', error);
+		return jsonResponse(503, {
+			error: 'temporarily_unavailable',
+			error_description: 'OAuth client registration is temporarily unavailable.',
+		});
+	}
+}
+
+function decodedBody(event: FunctionUrlEvent): string {
+	if (!event.body) return '';
+	return event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body;
+}
 
 function createServer(principal: McpPrincipal): McpServer {
 	const server = new McpServer({ name: 'numeraidashboard', version: '1.0.0' });

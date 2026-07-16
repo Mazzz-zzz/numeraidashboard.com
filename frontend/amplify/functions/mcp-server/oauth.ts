@@ -5,11 +5,13 @@ export type McpOAuthConfig = {
 	readonly userPoolId: string;
 	readonly clientId: string;
 	readonly authorizationServer: string;
+	readonly isAllowedClientId?: (clientId: string) => Promise<boolean>;
 };
 
 type VerifiedAccessToken = {
 	readonly sub?: unknown;
 	readonly aud?: unknown;
+	readonly client_id?: unknown;
 };
 
 type AccessTokenVerifier = {
@@ -17,17 +19,21 @@ type AccessTokenVerifier = {
 };
 
 export class McpOAuthAuthenticator {
+	private readonly staticClientId: string;
+	private readonly isAllowedClientId: (clientId: string) => Promise<boolean>;
 	private readonly verifier: AccessTokenVerifier;
 	readonly authorizationServer: string;
 
 	constructor(config: McpOAuthConfig, verifier?: AccessTokenVerifier) {
 		const userPoolId = required(config.userPoolId, 'Cognito user pool ID');
 		const clientId = required(config.clientId, 'MCP OAuth client ID');
+		this.staticClientId = clientId;
+		this.isAllowedClientId = config.isAllowedClientId ?? (async () => false);
 		this.authorizationServer = absoluteHttpsUrl(config.authorizationServer, 'OAuth authorization server');
 		this.verifier = verifier ?? CognitoJwtVerifier.create({
 			userPoolId,
 			tokenUse: 'access',
-			clientId,
+			clientId: null,
 		});
 	}
 
@@ -43,6 +49,10 @@ export class McpOAuthAuthenticator {
 		}
 
 		const ownerSub = typeof payload.sub === 'string' ? payload.sub.trim() : '';
+		const tokenClientId = typeof payload.client_id === 'string' ? payload.client_id.trim() : '';
+		if (!tokenClientId) return null;
+		const allowedClient = tokenClientId === this.staticClientId || await this.isAllowedClientId(tokenClientId);
+		if (!allowedClient) return null;
 		const resource = absoluteHttpsUrl(resourceUrl, 'MCP resource URL');
 		if (!ownerSub || !hasAudience(payload.aud, resource)) return null;
 		return { ownerSub };
