@@ -73,12 +73,26 @@ added inside these handlers.
 ## Hosted MCP endpoint
 
 `functions/mcp-server/` exposes a stateless, JSON-response Streamable HTTP MCP
-server through an Amplify-managed Lambda Function URL. The deployed URL is
-written to `amplify_outputs.json` as `custom.mcpUrl`. Every request must use
-`X-API-Key`; only the SHA-256 key hash and a display prefix are stored in the
-owner-scoped `ApiKey` model.
+server through an Amplify-managed Lambda Function URL. Deployment writes the
+endpoint and OAuth configuration to `amplify_outputs.json` as `custom.mcpUrl`,
+`custom.mcpOAuthClientId`, `custom.mcpOAuthAuthorizationServer`, and
+`custom.mcpOAuthDomain`.
 
-Generate a key locally:
+Claude custom connectors use Cognito OAuth:
+
+1. Set the connector URL to `custom.mcpUrl`.
+2. In Advanced settings, set OAuth Client ID to `custom.mcpOAuthClientId`.
+3. Leave OAuth Client Secret blank.
+4. Connect and sign in through the Cognito consent flow.
+
+The dedicated app client uses authorization code + S256 PKCE and permits only
+Claude's hosted callback, `https://claude.ai/api/mcp/auth_callback`. The MCP
+endpoint publishes RFC 9728 protected-resource metadata, verifies Cognito access
+token signatures and the dedicated client ID, and resolves the token subject
+back to the same owner-scoped records used by the web app.
+
+API keys remain available for clients that support static request headers.
+Generate one locally:
 
 ```sh
 cd frontend
@@ -91,7 +105,7 @@ Save `keyHash`, `keyPrefix`, a label in `name`, and the Cognito owner value in a
 client; it is shown only by the generator and cannot be recovered from Odoo,
 Amplify, or DynamoDB. Set `revokedAt` to disable a key immediately.
 
-Configure a remote MCP client with the deployed URL and header:
+Configure an API-key client with the deployed URL and header:
 
 ```json
 {
@@ -102,8 +116,8 @@ Configure a remote MCP client with the deployed URL and header:
 
 Tools are `list_training_runs`, `launch_training_run`,
 `poll_training_status`, `cancel_run`, and `list_submissions`. The Lambda has IAM
-access to the Data API, but each read and write is checked again against the API
-key owner's Cognito subject before provider credentials or workflow rows are
+access to the Data API, but every read and write is checked again against the
+authenticated Cognito subject before provider credentials or workflow rows are
 used. Local Mac daemon logs remain snapshots from `ComputeJob.logTail`; the
 hosted Lambda does not connect directly to a workstation.
 
