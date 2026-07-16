@@ -55,7 +55,7 @@ into one workspace while keeping the executable ML workload available as regular
 - Read live Numerai account and per-round submission data.
 - Run the Python workload independently with LightGBM, XGBoost, CatBoost, neural models, TabPFN, or TabICL.
 - Deploy the control plane with AWS Amplify Gen 2, Cognito, AppSync, Lambda, DynamoDB, and SSM.
-- Control owned training runs remotely through an API-key-authenticated, stateless MCP endpoint.
+- Control owned training runs remotely through an OAuth- or API-key-authenticated, stateless MCP endpoint.
 
 ## Integration Status
 
@@ -212,7 +212,7 @@ Treat the relying-party domain as permanent once a production environment is liv
 - Fresh credentials are written to deterministic caller-owned parameter paths.
 - Provider endpoint validation runs before stored credentials are resolved.
 - Raw credentials are never persisted in GraphQL model rows.
-- MCP API keys are stored only as SHA-256 hashes and every tool call is re-scoped to the key owner.
+- MCP OAuth tokens are verified against a dedicated Cognito app client; API keys are stored only as SHA-256 hashes. Every tool call is re-scoped to the authenticated Cognito owner.
 
 This is alpha software that can invoke paid compute and submit tournament predictions.
 Review IAM, provider configuration, budgets, and deployment logs before production use.
