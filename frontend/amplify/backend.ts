@@ -75,6 +75,10 @@ const mcpOAuthClient = new CfnUserPoolClient(authStack, 'McpOAuthClient', {
 	},
 });
 backend.mcpServer.resources.lambda.addEnvironment('MCP_OAUTH_CLIENT_ID', mcpOAuthClient.ref);
+backend.mcpServer.resources.lambda.addEnvironment(
+	'MCP_OAUTH_USER_POOL_ID',
+	backend.auth.resources.userPool.userPoolId
+);
 
 const cognitoIssuer = `https://cognito-idp.${authStack.region}.${authStack.urlSuffix}/${backend.auth.resources.userPool.userPoolId}`;
 const cognitoDomain = `https://${mcpOAuthDomainPrefix}.auth.${authStack.region}.amazoncognito.com`;

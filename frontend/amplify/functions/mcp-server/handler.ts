@@ -34,7 +34,7 @@ const controlPlane = new McpControlPlane(
 	generateClient<Schema>({ authMode: 'iam' }) as unknown as McpDataClient
 );
 
-const userPoolId = resourceConfig.Auth?.Cognito?.userPoolId;
+const userPoolId = process.env.MCP_OAUTH_USER_POOL_ID;
 const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
 if (!userPoolId || !oauthClientId) throw new Error('MCP OAuth configuration is incomplete');
 const cognitoRegion = userPoolId.split('_', 1)[0];
