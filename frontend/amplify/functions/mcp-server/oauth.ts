@@ -74,6 +74,10 @@ function bearerToken(value: string | null | undefined): string | null {
 }
 
 function hasAudience(value: unknown, resourceUrl: string): boolean {
+	// Cognito omits aud on user-pool access tokens even when the authorize request
+	// includes RFC 8707 resource. The verifier still binds the token to the
+	// dedicated MCP app client through its signed client_id claim.
+	if (value === undefined || value === null) return true;
 	if (typeof value === 'string') return value === resourceUrl;
 	return Array.isArray(value) && value.some((audience) => audience === resourceUrl);
 }

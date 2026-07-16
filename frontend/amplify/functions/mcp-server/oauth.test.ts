@@ -10,8 +10,8 @@ const config = {
 };
 
 describe('MCP OAuth authentication', () => {
-	it('accepts a verified access token bound to this MCP resource', async () => {
-		const verify = vi.fn().mockResolvedValue({ sub: 'user-1', aud: resourceUrl });
+	it('accepts a verified Cognito access token from the dedicated MCP client', async () => {
+		const verify = vi.fn().mockResolvedValue({ sub: 'user-1' });
 		const oauth = new McpOAuthAuthenticator(config, { verify });
 
 		await expect(oauth.authenticate('Bearer signed-token', resourceUrl)).resolves.toEqual({
