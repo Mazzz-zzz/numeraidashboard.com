@@ -7,6 +7,7 @@ import { z } from 'zod';
 import { env } from '$amplify/env/mcp-server';
 import type { Schema } from '../../data/resource';
 import { McpControlPlane, type McpDataClient, type McpPrincipal } from './control-plane';
+import { McpOAuthAuthenticator } from './oauth';
 
 type FunctionUrlEvent = {
 	readonly body?: string | null;
@@ -33,6 +34,16 @@ const controlPlane = new McpControlPlane(
 	generateClient<Schema>({ authMode: 'iam' }) as unknown as McpDataClient
 );
 
+const userPoolId = resourceConfig.Auth?.Cognito?.userPoolId;
+const oauthClientId = process.env.MCP_OAUTH_CLIENT_ID;
+if (!userPoolId || !oauthClientId) throw new Error('MCP OAuth configuration is incomplete');
+const cognitoRegion = userPoolId.split('_', 1)[0];
+const oauth = new McpOAuthAuthenticator({
+	userPoolId,
+	clientId: oauthClientId,
+	authorizationServer: `https://cognito-idp.${cognitoRegion}.amazonaws.com/${userPoolId}`,
+});
+
 type McpToolResult = {
 	readonly content: readonly { readonly type: 'text'; readonly text: string }[];
 	readonly isError?: boolean;
@@ -50,17 +61,27 @@ type RegisterTool = <Input extends Record<string, unknown>>(
 
 export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResult> => {
 	const method = event.requestContext?.http?.method?.toUpperCase() ?? 'POST';
+	const resource = resourceUrl(event);
+	const path = (event.rawPath || '/').replace(/\/+$/, '') || '/';
+	if (method === 'GET' && path === '/.well-known/oauth-protected-resource') {
+		return jsonResponse(200, oauth.protectedResourceMetadata(resource));
+	}
 	if (method !== 'POST') return methodNotAllowed();
 
-	let principal: McpPrincipal | null = null;
+	let principal = await oauth.authenticate(header(event.headers, 'authorization'), resource);
 	try {
-		principal = await controlPlane.authenticate(header(event.headers, 'x-api-key'));
+		principal ??= await controlPlane.authenticate(header(event.headers, 'x-api-key'));
 	} catch (error) {
 		console.error('MCP API-key lookup failed', error);
 		return jsonResponse(503, { error: 'MCP authentication is temporarily unavailable.' });
 	}
-	if (!principal) return jsonResponse(401, { error: 'A valid X-API-Key is required.' });
-
+	if (!principal) {
+		return jsonResponse(
+			401,
+			{ error: 'A valid OAuth bearer token or X-API-Key is required.' },
+			{ 'www-authenticate': oauth.challenge(resource) }
+		);
+	}
 	const server = createServer(principal);
 	const transport = new WebStandardStreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
@@ -163,6 +184,11 @@ async function toolResult<T>(operation: () => Promise<T>): Promise<McpToolResult
 	}
 }
 
+function resourceUrl(event: FunctionUrlEvent): string {
+	const domain = event.requestContext?.domainName ?? 'mcp.numeraidashboard.invalid';
+	return `https://${domain}/`;
+}
+
 function toRequest(event: FunctionUrlEvent): Request {
 	const domain = event.requestContext?.domainName ?? 'mcp.numeraidashboard.invalid';
 	const path = event.rawPath || '/';
@@ -204,10 +230,14 @@ function methodNotAllowed(): FunctionUrlResult {
 	});
 }
 
-function jsonResponse(statusCode: number, body: unknown): FunctionUrlResult {
+function jsonResponse(
+	statusCode: number,
+	body: unknown,
+	headers: Record<string, string> = {}
+): FunctionUrlResult {
 	return {
 		statusCode,
-		headers: { 'content-type': 'application/json' },
+		headers: { 'content-type': 'application/json', ...headers },
 		body: JSON.stringify(body),
 	};
 }

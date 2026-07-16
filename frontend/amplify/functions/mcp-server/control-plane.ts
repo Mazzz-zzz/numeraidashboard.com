@@ -45,7 +45,6 @@ export type McpDataClient = {
 };
 
 export type McpPrincipal = {
-	readonly apiKeyId: string;
 	readonly ownerSub: string;
 };
 
@@ -65,7 +64,7 @@ export class McpControlPlane {
 		const ownerSub = ownerSubFromRecord(key);
 		if (!ownerSub) return null;
 		await this.client.models.ApiKey.update({ id: key.id, lastUsedAt: new Date().toISOString() });
-		return { apiKeyId: key.id, ownerSub };
+		return { ownerSub };
 	}
 
 	async listTrainingRuns(

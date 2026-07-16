@@ -31,6 +31,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@xyflow/svelte": "^1.5.2",
     "aws-amplify": "^6.17.0",
+    "aws-jwt-verify": "^5.2.1",
     "lightweight-charts": "^4.2.0",
     "plotly.js-dist-min": "^2.29.0",
     "zod": "^3.25.17"
