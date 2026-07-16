@@ -212,7 +212,7 @@ Treat the relying-party domain as permanent once a production environment is liv
 - Fresh credentials are written to deterministic caller-owned parameter paths.
 - Provider endpoint validation runs before stored credentials are resolved.
 - Raw credentials are never persisted in GraphQL model rows.
-- MCP OAuth tokens are verified against a dedicated Cognito app client; API keys are stored only as SHA-256 hashes. Every tool call is re-scoped to the authenticated Cognito owner.
+- MCP OAuth tokens are verified against the predefined or dynamically registered Cognito client that issued them; API keys are stored only as SHA-256 hashes. Every tool call is re-scoped to the authenticated Cognito owner.
 
 This is alpha software that can invoke paid compute and submit tournament predictions.
 Review IAM, provider configuration, budgets, and deployment logs before production use.

@@ -75,8 +75,8 @@ added inside these handlers.
 `functions/mcp-server/` exposes a stateless, JSON-response Streamable HTTP MCP
 server through an Amplify-managed Lambda Function URL. Deployment writes the
 endpoint and OAuth configuration to `amplify_outputs.json` as `custom.mcpUrl`,
-`custom.mcpOAuthClientId`, `custom.mcpOAuthAuthorizationServer`, and
-`custom.mcpOAuthDomain`.
+`custom.mcpOAuthClientId`, `custom.mcpOAuthAuthorizationServer`,
+`custom.mcpOAuthDomain`, and `custom.mcpOAuthRegistrationUrl`.
 
 Claude custom connectors use Cognito OAuth:
 
@@ -85,11 +85,21 @@ Claude custom connectors use Cognito OAuth:
 3. Leave OAuth Client Secret blank.
 4. Connect and sign in through the Cognito consent flow.
 
-The dedicated app client uses authorization code + S256 PKCE and permits only
-Claude's hosted callback, `https://claude.ai/api/mcp/auth_callback`. The MCP
-endpoint publishes RFC 9728 protected-resource metadata, verifies Cognito access
-token signatures and the dedicated client ID, and resolves the token subject
-back to the same owner-scoped records used by the web app.
+ChatGPT custom connectors use dynamic client registration:
+
+1. Set the MCP server URL to `custom.mcpUrl`.
+2. Select DCR and set Registration URL to `custom.mcpOAuthRegistrationUrl`.
+3. Set Authorization Endpoint to `${custom.mcpOAuthDomain}/oauth2/authorize`.
+4. Set Token Endpoint to `${custom.mcpOAuthDomain}/oauth2/token`.
+5. Set scope to `openid` and token authentication to `none` (PKCE).
+6. Leave OAuth Client ID and Client Secret blank, then connect and sign in.
+
+The predefined client uses authorization code + S256 PKCE for Claude's hosted
+callback and ChatGPT's legacy callback. The registration endpoint creates
+secretless Cognito clients only for exact `https://chatgpt.com/connector/oauth/*`
+callbacks. The MCP endpoint publishes RFC 9728 protected-resource metadata,
+verifies Cognito access-token signatures and each signed client ID, and resolves
+the token subject back to the same owner-scoped records used by the web app.
 
 API keys remain available for clients that support static request headers.
 Generate one locally:
