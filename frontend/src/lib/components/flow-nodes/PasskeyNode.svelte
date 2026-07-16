@@ -1,7 +1,13 @@
 <script lang="ts">
 	import { Handle, Position } from '@xyflow/svelte';
 
-	let { data, selected }: { data: { count: number }; selected?: boolean } = $props();
+	let {
+		data,
+		selected
+	}: {
+		data: { count: number; eyebrow?: string; label?: string; countLabel?: string };
+		selected?: boolean;
+	} = $props();
 </script>
 
 <div class="node" class:selected>
@@ -13,9 +19,9 @@
 		</svg>
 	</div>
 	<div class="text">
-		<span class="eyebrow">Sign-in</span>
-		<strong>Passkeys</strong>
-		<span class="sub">{data.count} registered</span>
+		<span class="eyebrow">{data.eyebrow ?? 'Sign-in'}</span>
+		<strong>{data.label ?? 'Passkeys'}</strong>
+		<span class="sub">{data.count} {data.countLabel ?? 'registered'}</span>
 	</div>
 </div>
 
