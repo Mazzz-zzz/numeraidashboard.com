@@ -24,6 +24,13 @@ const outputModules = import.meta.glob<AmplifyOutputsModule>('../../amplify_outp
 });
 const outputs = outputModules['../../amplify_outputs.json']?.default;
 
+const customOutputs =
+	outputs && typeof outputs === 'object' && 'custom' in outputs
+		? (outputs.custom as Record<string, unknown>)
+		: null;
+export const mcpEndpointUrl =
+	typeof customOutputs?.mcpUrl === 'string' ? customOutputs.mcpUrl : null;
+
 const envUserPoolId = import.meta.env.VITE_COGNITO_USER_POOL_ID as string | undefined;
 const envUserPoolClientId = import.meta.env.VITE_COGNITO_USER_POOL_CLIENT_ID as string | undefined;
 const envConfig: ResourcesConfig | undefined =

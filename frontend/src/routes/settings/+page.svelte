@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import AuthGate from '$lib/components/AuthGate.svelte';
-	import { authState, getPasskeys, registerPasskey, deletePasskey } from '$lib/auth';
+	import { authState, deletePasskey, getPasskeys, mcpEndpointUrl, registerPasskey } from '$lib/auth';
 	import { dataClient } from '$lib/data';
 	import { addToast } from '$lib/stores';
 	import {
@@ -23,6 +23,7 @@
 
 	type NumeraiAccount = Schema['NumeraiAccount']['type'];
 	type ComputeProvider = Schema['ComputeProvider']['type'];
+	type ApiKey = Schema['ApiKey']['type'];
 	type ProviderType = 'prime_intellect' | 'modal' | 'sagemaker' | 'local' | 'custom';
 	type ProviderForm = {
 		name: string;
@@ -148,17 +149,21 @@
 	let numeraiAccount = $state<NumeraiAccount | null>(null);
 	let providers = $state<ComputeProvider[]>([]);
 	let passkeys = $state<Passkey[]>([]);
+	let apiKeys = $state<ApiKey[]>([]);
 	let loading = $state(true);
 
 	type DrawerState =
 		| { kind: 'none' }
 		| { kind: 'numerai' }
 		| { kind: 'passkeys' }
+		| { kind: 'mcp' }
 		| { kind: 'provider'; id: string }
 		| { kind: 'add-provider' };
 	let drawer = $state<DrawerState>({ kind: 'none' });
 
 	let numeraiForm = $state({ label: '', publicId: '', secretKey: '' });
+	let mcpKeyName = $state('');
+	let generatedMcpKey = $state<string | null>(null);
 	let providerForm = $state<ProviderForm>({
 		name: '',
 		providerType: 'prime_intellect' as ProviderType,
@@ -190,7 +195,7 @@
 
 	async function loadAll() {
 		loading = true;
-		await Promise.all([loadNumerai(), loadProviders(), loadPasskeys()]);
+		await Promise.all([loadNumerai(), loadProviders(), loadPasskeys(), loadMcpKeys()]);
 		loading = false;
 	}
 
@@ -218,6 +223,18 @@
 			passkeys = (result?.credentials ?? []) as Passkey[];
 		} catch (e) {
 			addToast(asMessage(e, 'Failed to load passkeys'), 'error');
+		}
+	}
+
+	async function loadMcpKeys() {
+		try {
+			const { data, errors } = await dataClient().models.ApiKey.list();
+			if (errors?.length) throw new Error(errors[0].message);
+			apiKeys = ((data ?? []) as ApiKey[]).sort(
+				(a, b) => Date.parse(b.createdAt ?? '') - Date.parse(a.createdAt ?? '')
+			);
+		} catch (e) {
+			addToast(asMessage(e, 'Failed to load MCP API keys'), 'error');
 		}
 	}
 
@@ -267,6 +284,17 @@
 				type: 'passkey',
 				position: { x: 360, y: 240 },
 				data: { count: passkeys.length }
+			},
+			{
+				id: 'mcp',
+				type: 'passkey',
+				position: { x: 360, y: 340 },
+				data: {
+					count: apiKeys.filter((key) => !key.revokedAt).length,
+					eyebrow: 'Remote access',
+					label: 'MCP API keys',
+					countLabel: 'active'
+				}
 			}
 		];
 
@@ -319,6 +347,15 @@
 				targetHandle: 'top',
 				type: 'smoothstep',
 				style: 'stroke: var(--text); stroke-width: 1.4;'
+			},
+			{
+				id: 'e-hub-mcp',
+				source: 'hub',
+				sourceHandle: 'bottom',
+				target: 'mcp',
+				targetHandle: 'top',
+				type: 'smoothstep',
+				style: 'stroke: var(--text); stroke-width: 1.4;'
 			}
 		];
 		providers.forEach((p) => {
@@ -354,6 +391,9 @@
 			drawer = { kind: 'numerai' };
 		} else if (node.id === 'passkeys') {
 			drawer = { kind: 'passkeys' };
+		} else if (node.id === 'mcp') {
+			generatedMcpKey = null;
+			drawer = { kind: 'mcp' };
 		} else if (node.id.startsWith('add-provider-')) {
 			const template = availableProviderTemplates.find((candidate) => providerTemplateNodeId(candidate) === node.id);
 			if (template) {
@@ -512,6 +552,7 @@
 	function closeDrawer() {
 		drawer = { kind: 'none' };
 		verifiedProviderRefs = null;
+		generatedMcpKey = null;
 	}
 
 	async function saveNumerai(event: Event) {
@@ -824,6 +865,70 @@
 		}
 	}
 
+	async function createMcpKey(event: Event) {
+		event.preventDefault();
+		busy = true;
+		generatedMcpKey = null;
+		try {
+			const rawKey = generateRawMcpKey();
+			const { data, errors } = await dataClient().models.ApiKey.create({
+				name: mcpKeyName.trim() || 'MCP client',
+				keyHash: await sha256Hex(rawKey),
+				keyPrefix: rawKey.slice(0, 15)
+			});
+			if (errors?.length) throw new Error(errors[0].message);
+			if (!data?.id) throw new Error('API key creation returned no data');
+			generatedMcpKey = rawKey;
+			mcpKeyName = '';
+			await loadMcpKeys();
+			addToast('MCP API key created. Copy it now.', 'success');
+		} catch (e) {
+			addToast(asMessage(e, 'Failed to create MCP API key'), 'error');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function revokeMcpKey(key: ApiKey) {
+		if (!confirm(`Revoke MCP API key “${key.name}”?`)) return;
+		busy = true;
+		try {
+			const { errors } = await dataClient().models.ApiKey.update({
+				id: key.id,
+				revokedAt: new Date().toISOString()
+			});
+			if (errors?.length) throw new Error(errors[0].message);
+			await loadMcpKeys();
+			addToast('MCP API key revoked', 'success');
+		} catch (e) {
+			addToast(asMessage(e, 'Failed to revoke MCP API key'), 'error');
+		} finally {
+			busy = false;
+		}
+	}
+
+	async function copyGeneratedMcpKey() {
+		if (!generatedMcpKey) return;
+		try {
+			await navigator.clipboard.writeText(generatedMcpKey);
+			addToast('MCP API key copied', 'success');
+		} catch (e) {
+			addToast(asMessage(e, 'Copy failed'), 'error');
+		}
+	}
+
+	function generateRawMcpKey(): string {
+		const bytes = crypto.getRandomValues(new Uint8Array(32));
+		let binary = '';
+		for (const byte of bytes) binary += String.fromCharCode(byte);
+		return `nd_mcp_${btoa(binary).replaceAll('+', '-').replaceAll('/', '_').replace(/=+$/, '')}`;
+	}
+
+	async function sha256Hex(value: string): Promise<string> {
+		const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(value));
+		return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, '0')).join('');
+	}
+
 	function asMessage(e: unknown, fallback: string) {
 		return e instanceof Error ? e.message : fallback;
 	}
@@ -875,6 +980,7 @@
 							<h2>
 								{#if drawer.kind === 'numerai'}Numerai account{/if}
 								{#if drawer.kind === 'passkeys'}Passkeys{/if}
+								{#if drawer.kind === 'mcp'}MCP API keys{/if}
 								{#if drawer.kind === 'provider'}{providerForm.name || 'Provider'}{/if}
 								{#if drawer.kind === 'add-provider'}Add {providerForm.name || 'compute provider'}{/if}
 							</h2>
@@ -955,6 +1061,51 @@
 									{busy ? 'Working…' : 'Add passkey'}
 								</button>
 							</div>
+						{:else if drawer.kind === 'mcp'}
+							<p class="muted">
+								Create a key for a remote MCP client. The raw key is shown once; only its SHA-256 hash is stored.
+							</p>
+							<dl class="kv">
+								<dt>Endpoint</dt>
+								<dd class="mono">{mcpEndpointUrl ?? 'Unavailable until the MCP backend is deployed'}</dd>
+							</dl>
+							<form class="form" onsubmit={createMcpKey}>
+								<label>
+									<span>Key name</span>
+									<input type="text" bind:value={mcpKeyName} placeholder="Claude Desktop" maxlength="80" required />
+								</label>
+								<div class="form-actions">
+									<button type="submit" class="primary" disabled={busy || !mcpEndpointUrl}>
+										{busy ? 'Creating…' : 'Create MCP API key'}
+									</button>
+								</div>
+							</form>
+							{#if generatedMcpKey}
+								<div class="generated-key">
+									<strong>Copy this key now. It cannot be recovered.</strong>
+									<code>{generatedMcpKey}</code>
+									<button type="button" onclick={copyGeneratedMcpKey}>Copy key</button>
+								</div>
+							{/if}
+							{#if apiKeys.length === 0}
+								<p class="muted">No MCP API keys yet.</p>
+							{:else}
+								<ul class="rows">
+									{#each apiKeys as key (key.id)}
+										<li class="row">
+											<div>
+												<strong>{key.name}</strong>
+												<span class="muted">
+													{key.keyPrefix}… · {key.revokedAt ? `revoked ${formatDate(key.revokedAt)}` : key.lastUsedAt ? `last used ${formatDate(key.lastUsedAt)}` : 'never used'}
+												</span>
+											</div>
+											{#if !key.revokedAt}
+												<button type="button" class="danger" onclick={() => revokeMcpKey(key)} disabled={busy}>Revoke</button>
+											{/if}
+										</li>
+									{/each}
+								</ul>
+							{/if}
 						{:else if drawer.kind === 'provider' || drawer.kind === 'add-provider'}
 							{#if drawer.kind === 'provider' && currentProvider}
 								<dl class="kv">
@@ -1467,6 +1618,21 @@
 		white-space: nowrap;
 	}
 	.row .muted { font-size: 0.72rem; font-family: var(--font-mono); }
+
+	.generated-key {
+		display: grid;
+		gap: 0.65rem;
+		padding: 0.8rem;
+		background: var(--badge-yellow, #fff8c5);
+		border: 1.5px solid var(--text);
+		border-radius: 4px;
+	}
+	.generated-key strong { font-size: 0.84rem; }
+	.generated-key code {
+		overflow-wrap: anywhere;
+		font-size: 0.78rem;
+		line-height: 1.5;
+	}
 
 	@media (max-width: 880px) {
 		.flow-shell {
