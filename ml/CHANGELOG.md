@@ -1,5 +1,21 @@
 # ML Pipeline Changelog
 
+## 2026-07-16 — Local XGBoost training
+
+### New: XGBoost model adapter (`models/xgboost_model.py`)
+**Files:** `models/xgboost_model.py`, `models/__init__.py`, `requirements.txt`
+
+Added pinned XGBoost 3.2 support with era-aware validation, early stopping,
+sample weights, shared progress callbacks, and UBJ model persistence. The
+factory and Builder now expose `model_type=xgboost`, so local daemon runs reuse
+the existing Numerai metrics, artifact, polling, and cancellation lifecycle.
+
+### Fix: macOS OpenMP setup covers native boosting libraries
+**Files:** `local/setup_libomp.sh`
+
+The no-Homebrew helper now patches both LightGBM and XGBoost dylibs against
+PyTorch's bundled `libomp.dylib`, and rejects stale Homebrew prefix records.
+
 ## 2026-03-28 — Deep learning models and MLP A/B testing
 
 ### New: FT-Transformer model (`models/ft_transformer_model.py`)

@@ -8,6 +8,7 @@
 
 	type ModelType =
 		| 'lgbm'
+		| 'xgboost'
 		| 'catboost'
 		| 'mlp'
 		| 'ft_transformer'
@@ -54,6 +55,7 @@
 			group: 'Gradient boosting',
 			options: [
 				{ value: 'lgbm', label: 'LightGBM' },
+				{ value: 'xgboost', label: 'XGBoost' },
 				{ value: 'catboost', label: 'CatBoost' }
 			]
 		},

@@ -39,6 +39,15 @@
 			docs: [{ label: 'Docs', href: 'https://lightgbm.readthedocs.io/' }]
 		},
 		{
+			value: 'xgboost',
+			name: 'XGBoost',
+			family: 'Gradient boosting',
+			route: 'Local histogram-tree challenger',
+			accelerator: 'CPU',
+			use: 'Portable histogram boosting baseline with era-aware early stopping.',
+			docs: [{ label: 'Docs', href: 'https://xgboost.readthedocs.io/' }]
+		},
+		{
 			value: 'catboost',
 			name: 'CatBoost',
 			family: 'Gradient boosting',
@@ -110,7 +119,7 @@
 	const modelFamilies = [
 		{
 			name: 'Tree baselines',
-			models: 'LightGBM, CatBoost',
+			models: 'LightGBM, XGBoost, CatBoost',
 			role: 'Establish a strong and cheap baseline before using GPU time.'
 		},
 		{
