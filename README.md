@@ -13,6 +13,7 @@
 <p align="center">
   <a href="https://numeraidashboard.com">Live app</a> |
   <a href="#quick-start">Quick start</a> |
+  <a href="docs/mcp/introduction.md">MCP docs</a> |
   <a href="#integration-status">Integration status</a> |
   <a href="#license">License</a>
 </p>
@@ -98,6 +99,14 @@ submissions remotely:
 
 ```
 https://lacdatamelsv55cio7jpnn5jxe0yvuvm.lambda-url.ap-southeast-2.on.aws/
+```
+
+The complete MCP guide and tool reference live in [`docs/mcp/`](docs/mcp/introduction.md)
+and are configured as a Scalar Docs 2.0 project by `scalar.config.json`. Preview
+them locally from the repository root with:
+
+```sh
+npx @scalar/cli project preview scalar.config.json
 ```
 
 Tools: `create_model`, `list_models`, `update_model`, `delete_model`,

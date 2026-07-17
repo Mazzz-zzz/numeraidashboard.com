@@ -77,6 +77,11 @@ server through an Amplify-managed Lambda Function URL. Deployment writes the
 endpoint to `amplify_outputs.json` as `custom.mcpUrl` (plus
 `custom.mcpOAuthAuthorizationServer` when OAuth is configured).
 
+The human-facing MCP reference is maintained in [`docs/mcp/`](../../docs/mcp/introduction.md)
+and rendered by the repository's Scalar Docs 2.0 configuration. From the
+repository root, run `npx @scalar/cli project preview scalar.config.json` to
+preview it.
+
 The endpoint is a pure OAuth 2.1 resource server (MCP authorization spec): it
 publishes RFC 9728 protected-resource metadata at
 `/.well-known/oauth-protected-resource`, challenges unauthenticated requests

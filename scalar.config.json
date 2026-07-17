@@ -1,0 +1,99 @@
+{
+  "$schema": "https://registry.scalar.com/@scalar/schemas/config",
+  "scalar": "2.0.0",
+  "info": {
+    "title": "Numerai Dashboard MCP",
+    "description": "Connect an AI agent to Numerai Dashboard models, compute providers, training runs, and submissions."
+  },
+  "siteConfig": {
+    "theme": "default",
+    "logo": "https://numeraidashboard.com/favicon.svg",
+    "colorScheme": {
+      "default": "system",
+      "showToggle": true
+    },
+    "layout": {
+      "toc": true,
+      "header": true,
+      "pageTitle": true,
+      "pageActions": true,
+      "search": {
+        "enabled": true,
+        "position": "header"
+      }
+    },
+    "head": {
+      "title": "Numerai Dashboard MCP",
+      "meta": [
+        {
+          "name": "description",
+          "content": "Documentation for the authenticated Numerai Dashboard MCP control plane."
+        }
+      ],
+      "links": [
+        {
+          "rel": "icon",
+          "href": "https://numeraidashboard.com/favicon.svg",
+          "type": "image/svg+xml"
+        }
+      ]
+    }
+  },
+  "navigation": {
+    "header": [
+      {
+        "type": "link",
+        "title": "Dashboard",
+        "to": "https://numeraidashboard.com",
+        "newTab": true
+      },
+      {
+        "type": "spacer"
+      },
+      {
+        "type": "link",
+        "title": "GitHub",
+        "to": "https://github.com/Mazzz-zzz/numeraidashboard.com",
+        "icon": "phosphor/regular/github-logo",
+        "newTab": true
+      }
+    ],
+    "routes": {
+      "/": {
+        "type": "page",
+        "title": "Introduction",
+        "description": "What the Numerai Dashboard MCP controls and how local training is routed.",
+        "filepath": "docs/mcp/introduction.md",
+        "icon": "phosphor/regular/house"
+      },
+      "/quickstart": {
+        "type": "page",
+        "title": "Quickstart",
+        "description": "Connect with OAuth and launch a TabM model on a local Mac provider.",
+        "filepath": "docs/mcp/quickstart.md",
+        "icon": "phosphor/regular/rocket-launch"
+      },
+      "/tools": {
+        "type": "page",
+        "title": "Tool reference",
+        "description": "Inputs, behavior, and safety semantics for every MCP tool.",
+        "filepath": "docs/mcp/tools.md",
+        "icon": "phosphor/regular/toolbox"
+      },
+      "/local-training": {
+        "type": "page",
+        "title": "Local training",
+        "description": "How MCP queues work for the normal workstation worker without contacting localhost.",
+        "filepath": "docs/mcp/local-training.md",
+        "icon": "phosphor/regular/desktop-tower"
+      },
+      "/security": {
+        "type": "page",
+        "title": "Authentication and safety",
+        "description": "OAuth, API keys, owner scoping, secrets, and destructive actions.",
+        "filepath": "docs/mcp/security.md",
+        "icon": "phosphor/regular/shield-check"
+      }
+    }
+  }
+}
