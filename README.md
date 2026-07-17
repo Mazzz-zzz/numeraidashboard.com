@@ -100,9 +100,10 @@ submissions remotely:
 https://lacdatamelsv55cio7jpnn5jxe0yvuvm.lambda-url.ap-southeast-2.on.aws/
 ```
 
-Tools: `list_training_runs`, `launch_training_run`, `poll_training_status`,
+Tools: `list_training_runs`, `list_compute_providers`, `launch_training_run`, `poll_training_status`,
 `cancel_run`, `list_submissions`. Every tool call is scoped to the authenticated
-user's records.
+user's records. Modal launches can request remote CPU compute with
+`{"run_id":"…","compute_type":"cpu"}`; this path does not use the local daemon.
 
 Two authentication paths are supported:
 

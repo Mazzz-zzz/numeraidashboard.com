@@ -123,11 +123,12 @@ Configure an API-key client with the deployed URL and header:
 }
 ```
 
-Tools are `list_training_runs`, `launch_training_run`,
+Tools are `list_training_runs`, `list_compute_providers`, `launch_training_run`,
 `poll_training_status`, `cancel_run`, and `list_submissions`. The Lambda has IAM
 access to the Data API, but every read and write is checked again against the
 authenticated Cognito subject before provider credentials or workflow rows are
-used.
+used. `launch_training_run` accepts `compute_type: "cpu"` for remote Modal CPU
+jobs; it does not route those jobs through the local daemon.
 
 The Lambda never connects to a workstation directly. Instead, runs on `local`
 compute providers stay `queued` until the machine's training daemon claims

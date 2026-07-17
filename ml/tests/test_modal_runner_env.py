@@ -95,3 +95,8 @@ def test_resolve_s3_bucket_reads_environment(monkeypatch, modal_runner):
 def test_resolve_s3_bucket_requires_configuration(modal_runner):
     with pytest.raises(ValueError, match="s3_bucket is required"):
         modal_runner._resolve_s3_bucket()
+
+
+def test_cpu_compute_tier_is_available(modal_runner):
+    assert modal_runner.GPU_MAP["cpu"] == "CPU"
+    assert modal_runner.GPU_FN_MAP["cpu"] is modal_runner.run_training_job_cpu

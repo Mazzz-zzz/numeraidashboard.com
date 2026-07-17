@@ -1,6 +1,6 @@
 """Modal Labs compute provider for ML training jobs.
 
-Runs the same training pipeline as bootstrap.py but on Modal's GPU infrastructure.
+Runs the same training pipeline as bootstrap.py on Modal CPU or GPU infrastructure.
 Modal handles provisioning, container setup, and teardown automatically.
 
 Usage:
@@ -19,6 +19,7 @@ import modal
 # ── Modal App Definition ──────────────────────────────────────────────────
 
 GPU_MAP = {
+    "cpu": "CPU",
     "t4": "T4",
     "a10g": "A10G",
     "l4": "L4",
@@ -285,7 +286,24 @@ def _run_training_inner(
     return {"status": "completed", "metrics": metrics}
 
 
-# One function per GPU tier — Modal requires gpu to be static in the decorator
+# One function per compute tier — Modal requires resources to be static in the decorator
+@app.function(
+    image=ml_image,
+    cpu=8.0,
+    memory=32768,
+    timeout=86400,
+    retries=0,
+    secrets=[aws_secret, hf_secret],
+)
+def run_training_job_cpu(
+    source_tarball_s3: str,
+    hyperparams: dict,
+    job_name: str,
+    s3_bucket: str | None = None,
+):
+    return _run_training_impl(source_tarball_s3, hyperparams, job_name, s3_bucket)
+
+
 @app.function(image=ml_image, gpu="T4", timeout=86400, retries=0, secrets=[aws_secret, hf_secret])
 def run_training_job_t4(
     source_tarball_s3: str,
@@ -468,6 +486,7 @@ def run_inference_job(
 # ── Web endpoint: allows Lambda to trigger jobs via HTTP POST ──────────
 
 GPU_FN_MAP = {
+    "cpu": run_training_job_cpu,
     "t4": run_training_job_t4,
     "a10g": run_training_job,
     "l4": run_training_job_l4,
@@ -484,7 +503,7 @@ def spawn_training(body: dict):
 
     POST body:
         {
-            "gpu": "h100",
+            "gpu": "cpu",  # or t4/a10g/l4/a100/a100-80gb/h100
             "job_name": "numerai-dashboard-exp-78-...",
             "hyperparams": {...},
             "s3_bucket": "your-artifact-bucket"
@@ -507,7 +526,7 @@ def spawn_training(body: dict):
 
     fn = GPU_FN_MAP.get(gpu)
     if fn is None:
-        return {"status": "error", "detail": f"Unknown GPU: {gpu}. Options: {sorted(GPU_FN_MAP.keys())}"}
+        return {"status": "error", "detail": f"Unknown compute type: {gpu}. Options: {sorted(GPU_FN_MAP.keys())}"}
 
     call = fn.spawn(
         source_tarball_s3=source_uri,
@@ -718,8 +737,9 @@ if __name__ == "__main__":
 
     source_uri = f"s3://{args.s3_bucket}/code/ml-source.tar.gz"
 
-    # Pick the right function for the GPU tier
+    # Pick the right function for the compute tier
     fn_name_map = {
+        "cpu": "run_training_job_cpu",
         "t4": "run_training_job_t4",
         "a10g": "run_training_job",
         "l4": "run_training_job_l4",
@@ -728,7 +748,7 @@ if __name__ == "__main__":
         "h100": "run_training_job_h100",
     }
     fn_name = fn_name_map.get(args.gpu, "run_training_job")
-    print(f"Using Modal function: {fn_name} (gpu={args.gpu})")
+    print(f"Using Modal function: {fn_name} (compute={args.gpu})")
     fn = modal.Function.from_name(MODAL_APP_NAME, fn_name)
     call = fn.spawn(
         source_tarball_s3=source_uri,

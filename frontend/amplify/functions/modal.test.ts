@@ -76,4 +76,32 @@ describe('Modal operator configuration', () => {
 			expect.objectContaining({ body: expect.stringContaining('"s3_bucket":"operator-artifacts"') })
 		);
 	});
+
+	it('sends cpu as the Modal compute type when explicitly configured', async () => {
+		const fetchFn = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ call_id: 'modal-cpu-job-123', status: 'queued' }), { status: 200 })
+		);
+
+		const result = await launchModalTraining(
+			{
+				...liveInput,
+				providerConfigJson: {
+					modal: {
+						gpuType: 'cpu',
+						s3Bucket: 'operator-artifacts',
+						launchUrl: 'https://example.test/spawn-training',
+					},
+				},
+			},
+			{ fetchFn }
+		);
+
+		expect(result).toMatchObject({
+			ok: true,
+			providerJobId: 'modal-cpu-job-123',
+			metricsJson: { gpu: 'cpu', gpuType: 'cpu' },
+		});
+		const payload = JSON.parse((fetchFn.mock.calls[0]?.[1] as RequestInit).body as string);
+		expect(payload).toMatchObject({ gpu: 'cpu', gpu_type: 'cpu' });
+	});
 });

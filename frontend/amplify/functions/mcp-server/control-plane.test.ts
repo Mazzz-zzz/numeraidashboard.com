@@ -47,7 +47,10 @@ describe('MCP control-plane security', () => {
 	it('filters and rechecks ownership before returning training runs', async () => {
 		const list = vi.fn().mockResolvedValue({
 			data: [
-				{ id: 'run-1', owner: 'user-1::person@example.com', pipelineId: 'pipe-1', status: 'queued' },
+				{
+					id: 'run-1', owner: 'user-1::person@example.com', pipelineId: 'pipe-1', status: 'queued',
+					configJson: { model_type: 'lgbm', feature_set: 'small' },
+				},
 				{ id: 'run-foreign', owner: 'user-10::other@example.com', pipelineId: 'pipe-x', status: 'queued' },
 			],
 		});
@@ -73,6 +76,48 @@ describe('MCP control-plane security', () => {
 		});
 		expect(runs).toHaveLength(1);
 		expect(runs[0]?.id).toBe('run-1');
+		expect(runs[0]?.configJson).toEqual({ model_type: 'lgbm', feature_set: 'small' });
+	});
+
+	it('lists safe provider metadata without returning credentials', async () => {
+		const list = vi.fn().mockResolvedValue({
+			data: [
+				{
+					id: 'provider-local', owner: 'user-1::person@example.com', name: 'Mac Studio',
+					providerType: 'local', status: 'available', verifiedAt: '2026-07-17T12:00:00.000Z',
+					apiKeyRef: '/secret/key', credentialsJson: { token: 'secret' },
+				},
+				{ id: 'provider-foreign', owner: 'user-10', name: 'Other', providerType: 'local' },
+			],
+		});
+		const plane = new McpControlPlane({ models: { ComputeProvider: { list } } } as never);
+
+		const providers = await plane.listComputeProviders(
+			{ ownerSub: 'user-1' },
+			{ providerType: 'local', status: 'available', limit: 10 }
+		);
+
+		expect(list).toHaveBeenCalledWith({
+			filter: {
+				and: [
+					{
+						or: [
+							{ owner: { eq: 'user-1' } },
+							{ owner: { beginsWith: 'user-1::' } },
+						],
+					},
+					{ providerType: { eq: 'local' } },
+					{ status: { eq: 'available' } },
+				],
+			},
+			limit: 10,
+		});
+		expect(providers).toHaveLength(1);
+		expect(providers[0]).toMatchObject({
+			id: 'provider-local', name: 'Mac Studio', providerType: 'local', status: 'available',
+		});
+		expect(providers[0]).not.toHaveProperty('apiKeyRef');
+		expect(providers[0]).not.toHaveProperty('credentialsJson');
 	});
 
 	it('launches through the shared mutation and persists owner-scoped run/job state', async () => {
@@ -147,6 +192,55 @@ describe('MCP control-plane security', () => {
 		expect(result.job).toBeNull();
 		expect(result.action.providerJobId).toBe('modal-job-1');
 	});
+
+	it('composes run hyperparameters and an explicit CPU type for Modal launches', async () => {
+		const startTraining = vi.fn().mockResolvedValue({
+			data: {
+				ok: true, status: 'queued', providerJobId: 'modal-cpu-job-1',
+				checkedAt: '2026-07-17T12:00:00.000Z',
+			},
+		});
+		const run = {
+			id: 'run-1', owner: 'user-1', pipelineId: 'pipe-1', providerId: 'provider-modal', status: 'queued',
+			configJson: {
+				model_type: 'lgbm', feature_set: 'small', hyperparams: { max_train_eras: 20 }, modelId: 'model-1',
+			},
+		};
+		const client = {
+			models: {
+				TrainingRun: {
+					get: vi.fn().mockResolvedValue({ data: run }),
+					update: vi.fn().mockImplementation(async (patch) => ({ data: { ...run, ...patch } })),
+				},
+				ComputeProvider: {
+					get: vi.fn().mockResolvedValue({
+						data: {
+							id: 'provider-modal', owner: 'user-1', name: 'Modal', providerType: 'modal', status: 'available',
+							credentialsJson: { modal: { s3Bucket: 'artifacts', hyperparams: { num_rounds: 10 } } },
+						},
+					}),
+				},
+				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+			},
+			mutations: { startTraining },
+		};
+		const plane = new McpControlPlane(client as never);
+
+		await plane.launchTrainingRun(
+			{ ownerSub: 'user-1' },
+			{ runId: 'run-1', computeType: 'CPU' }
+		);
+
+		const config = JSON.parse(startTraining.mock.calls[0]?.[0].providerConfigJson);
+		expect(config).toEqual({
+			modal: {
+				s3Bucket: 'artifacts', gpuType: 'cpu',
+				hyperparams: {
+					num_rounds: 10, model_type: 'lgbm', feature_set: 'small', max_train_eras: 20,
+				},
+			},
+		});
+	});
 });
 
 describe('MCP control-plane local daemon sync', () => {
@@ -209,6 +303,40 @@ describe('MCP control-plane local daemon sync', () => {
 		expect(client.mutations.startTraining).not.toHaveBeenCalled();
 		expect(result.action.status).toBe('queued');
 		expect(result.action.logTail).toContain('local training daemon');
+	});
+
+	it('persists a provider override so later operations use the selected provider', async () => {
+		const run = {
+			id: 'run-1', owner: 'user-1', pipelineId: 'pipe-1', providerId: 'provider-modal', status: 'queued',
+		};
+		const updateRun = vi.fn().mockImplementation(async (patch) => ({ data: { ...run, ...patch } }));
+		const startTraining = vi.fn();
+		const client = {
+			models: {
+				TrainingRun: { get: vi.fn().mockResolvedValue({ data: run }), update: updateRun },
+				ComputeProvider: {
+					get: vi.fn().mockResolvedValue({
+						data: {
+							id: 'provider-local', owner: 'user-1', name: 'Mac Studio',
+							providerType: 'local', status: 'available',
+						},
+					}),
+				},
+				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+			},
+			mutations: { startTraining },
+		};
+		const plane = new McpControlPlane(client as never);
+
+		const result = await plane.launchTrainingRun(principal, {
+			runId: 'run-1', providerId: 'provider-local',
+		});
+
+		expect(startTraining).not.toHaveBeenCalled();
+		expect(updateRun).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'run-1', providerId: 'provider-local', status: 'queued' })
+		);
+		expect(result.run.providerId).toBe('provider-local');
 	});
 
 	it('reports daemon-pushed state on poll instead of overwriting it', async () => {
