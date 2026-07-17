@@ -2,8 +2,8 @@
   "$schema": "https://registry.scalar.com/@scalar/schemas/config",
   "scalar": "2.0.0",
   "info": {
-    "title": "Numerai Dashboard MCP",
-    "description": "Connect an AI agent to Numerai Dashboard models, compute providers, training runs, and submissions."
+    "title": "Numerai Dashboard",
+    "description": "Models, training workflows, and the MCP control plane for Numerai Dashboard."
   },
   "siteConfig": {
     "theme": "default",
@@ -23,11 +23,11 @@
       }
     },
     "head": {
-      "title": "Numerai Dashboard MCP",
+      "title": "Numerai Dashboard Docs",
       "meta": [
         {
           "name": "description",
-          "content": "Documentation for the authenticated Numerai Dashboard MCP control plane."
+          "content": "Numerai Dashboard model, training, and authenticated MCP documentation."
         }
       ],
       "links": [
@@ -79,6 +79,13 @@
         "description": "Inputs, behavior, and safety semantics for every MCP tool.",
         "filepath": "docs/mcp/tools.md",
         "icon": "phosphor/regular/toolbox"
+      },
+      "/models": {
+        "type": "page",
+        "title": "Model reference",
+        "description": "Capabilities, runtimes, and configuration fields for every supported trainer model.",
+        "filepath": "docs/mcp/models.md",
+        "icon": "phosphor/regular/cube"
       },
       "/local-training": {
         "type": "page",

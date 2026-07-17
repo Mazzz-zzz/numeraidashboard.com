@@ -355,11 +355,11 @@ export class McpControlPlane {
 		// Local state is pushed by the daemon; re-invoking the cloud mutation would
 		// overwrite it with a synthetic 'queued'. Report what the daemon last wrote.
 		if (isLocalProvider(provider)) {
-			return {
-				action: publicAction(syntheticAction(run.status ?? 'queued', job, run.logTail ?? null, run)),
-				run: publicTrainingRun(run),
-				job: job ? publicComputeJob(job) : null,
-			};
+			const action = syntheticAction(run.status ?? 'queued', job, run.logTail ?? null, run);
+			// Older MCP launches may predate owner-scoped ComputeJob creation.
+			// Repair them on the next MCP poll so the UI can refresh the run too.
+			if (!job) return this.persistAction(principal, run, provider, action, null);
+			return { action: publicAction(action), run: publicTrainingRun(run), job: publicComputeJob(job) };
 		}
 		const action = await this.invokeTrainingMutation('poll', principal, run, provider, job?.providerJobId ?? null);
 		return this.persistAction(principal, run, provider, action, job);
@@ -417,9 +417,9 @@ export class McpControlPlane {
 		const cancels = [];
 		for (const run of cancelled) {
 			if (!run.providerId || !localProviders.has(run.providerId)) continue;
-			// MCP-launched runs have no ComputeJob row, so the cloud can't tell
-			// whether the daemon already acted — the daemon skips cancels whose
-			// local job is terminal (or absent), making repeats cheap no-ops.
+			// Legacy MCP-launched runs may have no ComputeJob row. The daemon skips
+			// cancels whose local job is terminal (or absent), making repeats cheap
+			// no-ops while the next poll/report backfills the cloud job record.
 			const job = await this.jobForRun(principal, run.id);
 			if (job && isTerminalStatus(job.status)) continue;
 			cancels.push({ runId: run.id, providerJobId: job?.providerJobId ?? null });
@@ -665,11 +665,9 @@ export class McpControlPlane {
 		throwDataErrors(runErrors, 'TrainingRun update failed');
 		if (!updatedRun || !ownedBy(updatedRun, principal)) throw new Error('TrainingRun update returned no data.');
 
-		// Update the run's ComputeJob when the browser created one. The Lambda
-		// cannot create job rows itself: CreateComputeJobInput has no owner field
-		// (owner is auto-set only for user-pool writes), so an IAM-side create
-		// either fails or produces an unowned row. The TrainingRun row carries
-		// all state the UI and MCP tools read.
+		// Keep the same owner-scoped ComputeJob contract used by browser launches.
+		// The Launch and Models pages join models to providers through this row,
+		// so TrainingRun state alone is not sufficient for an MCP-created run.
 		const job = existingJob ?? (await this.jobForRun(principal, run.id));
 		let updatedJob: ComputeJob | null = null;
 		if (job) {
@@ -680,6 +678,17 @@ export class McpControlPlane {
 			});
 			throwDataErrors(jobResult.errors, 'ComputeJob write failed');
 			if (!jobResult.data || !ownedBy(jobResult.data, principal)) throw new Error('ComputeJob write returned no data.');
+			updatedJob = jobResult.data as ComputeJob;
+		} else {
+			const jobResult = await this.client.models.ComputeJob.create({
+				owner: principal.ownerSub,
+				providerId: provider.id,
+				runId: run.id,
+				name: computeJobName(run),
+				...computeJobPatch(action),
+			});
+			throwDataErrors(jobResult.errors, 'ComputeJob create failed');
+			if (!jobResult.data || !ownedBy(jobResult.data, principal)) throw new Error('ComputeJob create returned no owned data.');
 			updatedJob = jobResult.data as ComputeJob;
 		}
 
@@ -980,6 +989,11 @@ function computeJobPatch(action: TrainingActionResult) {
 		logTail: action.logTail ?? action.error ?? null,
 		actualCostUsd: action.costUsd ?? null,
 	};
+}
+
+function computeJobName(run: TrainingRun): string {
+	const config = parsedRecord(run.configJson);
+	return stringOr(config?.modelName) ?? `MCP training ${run.id}`;
 }
 
 function publicTrainingRun(run: TrainingRun) {
