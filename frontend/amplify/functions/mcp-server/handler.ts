@@ -1,5 +1,6 @@
 import { Amplify } from 'aws-amplify';
 import { generateClient } from 'aws-amplify/data';
+import { GetParameterCommand, SSMClient } from '@aws-sdk/client-ssm';
 import { getAmplifyDataClientConfig } from '@aws-amplify/backend/function/runtime';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
@@ -36,8 +37,30 @@ type FunctionUrlResult = {
 
 const { resourceConfig, libraryOptions } = await getAmplifyDataClientConfig(env);
 Amplify.configure(resourceConfig, libraryOptions);
+const ssm = new SSMClient({});
 const controlPlane = new McpControlPlane(
-	generateClient<Schema>({ authMode: 'iam' }) as unknown as McpDataClient
+	generateClient<Schema>({ authMode: 'iam' }) as unknown as McpDataClient,
+	{
+		getSecret: async (ref) => {
+			const result = await ssm.send(new GetParameterCommand({ Name: ref, WithDecryption: true }));
+			const value = result.Parameter?.Value;
+			if (!value) throw new Error('The Numerai account secret could not be resolved.');
+			return value;
+		},
+		numeraiQuery: async (authToken, query) => {
+			const response = await fetch('https://api-tournament.numer.ai/', {
+				method: 'POST',
+				headers: {
+					Accept: 'application/json',
+					'Content-Type': 'application/json',
+					Authorization: `Token ${authToken}`,
+				},
+				body: JSON.stringify({ query }),
+			});
+			if (!response.ok) throw new Error(`Numerai API request failed: HTTP ${response.status}`);
+			return (await response.json()) as Record<string, unknown>;
+		},
+	}
 );
 
 // OAuth is optional: without MCP_OAUTH_ISSUER (the Auth0 tenant) the endpoint
@@ -361,6 +384,17 @@ function createServer(principal: McpPrincipal): McpServer {
 		},
 		async ({ model_id, status, limit }) =>
 			toolResult(() => controlPlane.listSubmissions(principal, { modelId: model_id, status, limit }))
+	);
+
+	registerTool<Record<string, never>>(
+		'get_numerai_account',
+		{
+			description:
+				'Show the linked Numerai account: verification status, username, and the Numerai models it owns. Use the returned model ids with update_model.numerai_model_id to link registry models. Secrets are never returned.',
+			inputSchema: {},
+			annotations: { readOnlyHint: true },
+		},
+		async () => toolResult(() => controlPlane.getNumeraiAccount(principal))
 	);
 
 	return server;

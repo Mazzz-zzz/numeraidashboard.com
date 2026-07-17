@@ -149,6 +149,14 @@ Lists owned Numerai model submission records.
 
 Read-only. Creating a new submission is not yet exposed through MCP.
 
+## Account tools
+
+### `get_numerai_account`
+
+Shows the Numerai account linked in dashboard Settings: masked public ID, verification status, username, and the Numerai models the account owns. Use the returned Numerai model ids with `update_model.numerai_model_id` to link registry models for benchmarking and submissions.
+
+Takes no arguments. Read-only. The account secret and its storage reference are never returned; if no account is linked, the tool says so instead of failing.
+
 ## Error behavior
 
 Tool failures return an MCP tool result with `isError: true` and a human-readable message. Common failures include:
