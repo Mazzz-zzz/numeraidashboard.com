@@ -6,6 +6,7 @@ import type { ModelRegistryItem, ModelStage } from './registry-service';
 import {
 	startTrainingRun,
 	pollTrainingRunStatus,
+	readLocalTrainingSnapshot,
 	terminalActionTimestamp,
 	toComputeJobStatus,
 	updateTrainingRunFromAction,
@@ -142,6 +143,28 @@ export async function refreshModelTraining(
 	client: Client = dataClient()
 ): Promise<ModelTrainingResult> {
 	if (!input.job.runId) throw new Error('Model training job is missing a run id.');
+	if (input.provider.providerType === 'local') {
+		const snapshot = await readLocalTrainingSnapshot(
+			{
+				runId: input.job.runId,
+				providerJobId: input.job.providerJobId ?? null
+			},
+			client
+		);
+		if (!snapshot.job) throw new Error(`Local training run ${input.job.runId} is missing its compute job.`);
+		const model = await persistModelAction(
+			{
+				model: input.model,
+				pipelineId: input.model.pipelineId ?? null,
+				branchId: input.model.branchId ?? null,
+				runId: input.job.runId,
+				lineage: jsonRecord(input.model.lineageJson),
+				action: snapshot.action
+			},
+			client
+		);
+		return { model, run: snapshot.run, job: snapshot.job, action: snapshot.action };
+	}
 	const action = await pollTrainingRunStatus(
 		{
 			runId: input.job.runId,

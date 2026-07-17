@@ -1,14 +1,18 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	normalizeTrainingActionStatus,
+	readLocalTrainingSnapshot,
 	providerTypeArgument,
 	serializeAwsJsonArg,
+	startTrainingRun,
 	terminalActionTimestamp,
 	toComputeJobStatus,
 	trainingActionSummary,
 	trainingRunPatchFromAction
 } from './training-service';
 import type { ComputeProvider } from './compute-service';
+
+vi.mock('$lib/auth', () => ({ requireAuthSession: vi.fn().mockResolvedValue(undefined) }));
 
 describe('training service', () => {
 	it('passes provider type through for function arguments', () => {
@@ -127,5 +131,65 @@ describe('training service', () => {
 			status: 'failed',
 			logTail: 'No Prime Intellect availability found for L40S_48GBx1'
 		});
+	});
+
+	it('queues local launches in cloud without calling a browser daemon or cloud provider mutation', async () => {
+		const startTraining = vi.fn();
+		const action = await startTrainingRun(
+			{
+				runId: 'run-local',
+				provider: { id: 'provider-local', providerType: 'local' } as ComputeProvider
+			},
+			{ mutations: { startTraining } } as never
+		);
+
+		expect(startTraining).not.toHaveBeenCalled();
+		expect(action).toMatchObject({
+			ok: true,
+			status: 'queued',
+			providerJobId: null,
+			logTail: 'Run queued for the local training daemon.'
+		});
+	});
+
+	it('reads local status from daemon-pushed cloud records', async () => {
+		const getRun = vi.fn().mockResolvedValue({
+			data: {
+				id: 'run-local',
+				status: 'running',
+				logTail: 'epoch 2',
+				updatedAt: '2026-07-17T14:30:00.000Z'
+			}
+		});
+		const listJobs = vi.fn().mockResolvedValue({
+			data: [
+				{
+					id: 'job-local',
+					runId: 'run-local',
+					status: 'running',
+					providerJobId: 'local-run-local-1',
+					updatedAt: '2026-07-17T14:30:01.000Z'
+				}
+			]
+		});
+		const snapshot = await readLocalTrainingSnapshot(
+			{ runId: 'run-local', providerJobId: null },
+			{
+				models: {
+					TrainingRun: { get: getRun },
+					ComputeJob: { list: listJobs }
+				}
+			} as never
+		);
+
+		expect(getRun).toHaveBeenCalledWith({ id: 'run-local' });
+		expect(listJobs).toHaveBeenCalledWith({ filter: { runId: { eq: 'run-local' } }, limit: 20 });
+		expect(snapshot.action).toMatchObject({
+			ok: true,
+			status: 'running',
+			providerJobId: 'local-run-local-1',
+			logTail: 'epoch 2'
+		});
+		expect(snapshot.job?.id).toBe('job-local');
 	});
 });
