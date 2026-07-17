@@ -44,6 +44,13 @@ describe('credential schema hardening', () => {
 		expect(modelBlock('ApiKey')).not.toContain('rawKey');
 	});
 
+	it('exposes owner fields for MCP-created model workflow rows', () => {
+		for (const model of ['Pipeline', 'ModelBranch', 'TrainingRun', 'ModelRegistryItem']) {
+			expect(modelBlock(model), model).toContain('owner: a.string()');
+			expect(modelBlock(model), model).toContain('allow.owner()');
+		}
+	});
+
 	it('scopes Lambda SSM permissions to the dashboard parameter namespace', () => {
 		expect(backendSource).toContain("resourceName: 'numeraidashboard/*'");
 		expect(backendSource).not.toContain("resources: ['*']");

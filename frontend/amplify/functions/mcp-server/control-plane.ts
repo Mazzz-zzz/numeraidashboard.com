@@ -4,7 +4,10 @@ import type { Schema } from '../../data/resource';
 type ApiKey = Schema['ApiKey']['type'];
 type ComputeJob = Schema['ComputeJob']['type'];
 type ComputeProvider = Schema['ComputeProvider']['type'];
+type ModelBranch = Schema['ModelBranch']['type'];
+type ModelRegistryItem = Schema['ModelRegistryItem']['type'];
 type ModelSubmission = Schema['ModelSubmission']['type'];
+type Pipeline = Schema['Pipeline']['type'];
 type TrainingActionResult = NonNullable<Schema['TrainingActionResult']['type']>;
 type TrainingRun = Schema['TrainingRun']['type'];
 
@@ -23,7 +26,23 @@ export type McpDataClient = {
 		readonly TrainingRun: {
 			list(args: unknown): DataResult<TrainingRun[]>;
 			get(args: unknown): DataResult<TrainingRun>;
+			create(args: unknown): DataResult<TrainingRun>;
 			update(args: unknown): DataResult<TrainingRun>;
+		};
+		readonly Pipeline: {
+			get(args: unknown): DataResult<Pipeline>;
+			create(args: unknown): DataResult<Pipeline>;
+			update(args: unknown): DataResult<Pipeline>;
+		};
+		readonly ModelBranch: {
+			get(args: unknown): DataResult<ModelBranch>;
+			create(args: unknown): DataResult<ModelBranch>;
+			update(args: unknown): DataResult<ModelBranch>;
+		};
+		readonly ModelRegistryItem: {
+			list(args: unknown): DataResult<ModelRegistryItem[]>;
+			get(args: unknown): DataResult<ModelRegistryItem>;
+			update(args: unknown): DataResult<ModelRegistryItem>;
 		};
 		readonly ComputeProvider: {
 			get(args: unknown): DataResult<ComputeProvider>;
@@ -85,6 +104,22 @@ export class McpControlPlane {
 			.map(publicTrainingRun);
 	}
 
+	async listModels(
+		principal: McpPrincipal,
+		input: { readonly stage?: string; readonly limit?: number } = {}
+	) {
+		const limit = boundedLimit(input.limit);
+		const filter = ownedFilter(
+			principal,
+			input.stage?.trim() ? { stage: { eq: input.stage.trim() } } : undefined
+		);
+		const { data, errors } = await this.client.models.ModelRegistryItem.list({ filter, limit });
+		throwDataErrors(errors, 'ModelRegistryItem list failed');
+		return (data ?? [])
+			.filter((record) => ownedBy(record, principal))
+			.map(publicModel);
+	}
+
 	async listComputeProviders(
 		principal: McpPrincipal,
 		input: { readonly providerType?: string; readonly status?: string; readonly limit?: number } = {}
@@ -131,6 +166,68 @@ export class McpControlPlane {
 		}
 		const action = await this.invokeTrainingMutation('start', principal, run, provider, null, computeType);
 		return this.persistAction(principal, run, provider, action);
+	}
+
+	async launchModelTraining(
+		principal: McpPrincipal,
+		input: {
+			readonly modelId: string;
+			readonly providerId: string;
+			readonly computeType?: string;
+			readonly maxSpendUsd?: number;
+		}
+	) {
+		const model = await this.ownedModel(principal, input.modelId);
+		const provider = await this.ownedProvider(principal, input.providerId);
+		if (provider.status === 'disabled') throw new Error(`Compute provider ${provider.id} is disabled.`);
+		const computeType = input.computeType?.trim().toLowerCase() || undefined;
+		if (computeType && provider.providerType !== 'modal') {
+			throw new Error('compute_type is currently supported only for Modal providers.');
+		}
+		const lineage = parsedRecord(model.lineageJson) ?? {};
+		const runConfig = parsedRecord(lineage.runConfig) ?? {};
+		if (!stringOr(runConfig.model_type) && !stringOr(runConfig.modelType)) {
+			throw new Error(`Model ${model.id} has no model_type in lineageJson.runConfig.`);
+		}
+
+		const { pipeline, branch } = await this.ensureModelPipeline(principal, model, lineage);
+		const { data: run, errors: runErrors } = await this.client.models.TrainingRun.create({
+			owner: principal.ownerSub,
+			pipelineId: pipeline.id,
+			branchId: branch.id,
+			providerId: provider.id,
+			modelTemplate: modelTemplate(lineage),
+			status: 'queued',
+			configJson: {
+				...runConfig,
+				modelId: model.id,
+				modelName: model.name,
+				sweep: parsedRecord(lineage.sweep) ?? {},
+			},
+			costUsd: finiteNumber(input.maxSpendUsd),
+		});
+		throwDataErrors(runErrors, 'TrainingRun create failed');
+		if (!run || !ownedBy(run, principal)) throw new Error('TrainingRun create returned no owned data.');
+
+		const linkedModel = await this.updateModel(principal, model, {
+			stage: 'training',
+			pipelineId: pipeline.id,
+			branchId: branch.id,
+			runId: run.id,
+		});
+		const launched = await this.launchTrainingRun(principal, {
+			runId: run.id,
+			providerId: provider.id,
+			computeType,
+		});
+		const updatedModel = await this.updateModel(principal, linkedModel, {
+			stage: modelStage(launched.action.status),
+			lineageJson: {
+				...lineage,
+				lastTrainingAction: launched.action,
+			},
+		});
+		return { model: publicModel(updatedModel), ...launched };
 	}
 
 	async pollTrainingStatus(principal: McpPrincipal, input: { readonly runId: string }) {
@@ -247,6 +344,81 @@ export class McpControlPlane {
 		const providers = (data ?? []).filter((record) => ownedBy(record, principal)) as ComputeProvider[];
 		await Promise.all(providers.map((provider) => this.touchDaemonHeartbeat(provider)));
 		return new Set(providers.map((provider) => provider.id));
+	}
+
+	private async ensureModelPipeline(
+		principal: McpPrincipal,
+		model: ModelRegistryItem,
+		lineage: Record<string, unknown>
+	): Promise<{ readonly pipeline: Pipeline; readonly branch: ModelBranch }> {
+		if (model.pipelineId && model.branchId) {
+			const [pipelineResult, branchResult] = await Promise.all([
+				this.client.models.Pipeline.get({ id: model.pipelineId }),
+				this.client.models.ModelBranch.get({ id: model.branchId }),
+			]);
+			throwDataErrors(pipelineResult.errors, 'Pipeline lookup failed');
+			throwDataErrors(branchResult.errors, 'ModelBranch lookup failed');
+			if (
+				pipelineResult.data && ownedBy(pipelineResult.data, principal) &&
+				branchResult.data && ownedBy(branchResult.data, principal)
+			) {
+				return { pipeline: pipelineResult.data as Pipeline, branch: branchResult.data as ModelBranch };
+			}
+		}
+
+		const graphJson = { lineage };
+		const pipelineResult = await this.client.models.Pipeline.create({
+			owner: principal.ownerSub,
+			name: model.name,
+			description: model.changeSummary ?? 'Model draft launched through MCP.',
+			status: 'testing',
+			template: modelTemplate(lineage),
+			graphJson,
+		});
+		throwDataErrors(pipelineResult.errors, 'Pipeline create failed');
+		if (!pipelineResult.data || !ownedBy(pipelineResult.data, principal)) {
+			throw new Error('Pipeline create returned no owned data.');
+		}
+		const pipeline = pipelineResult.data as Pipeline;
+
+		const branchResult = await this.client.models.ModelBranch.create({
+			owner: principal.ownerSub,
+			pipelineId: pipeline.id,
+			name: `${model.name}-mcp`,
+			changeSummary: model.changeSummary ?? 'Model draft launch branch created through MCP.',
+			graphJson,
+			status: 'queued',
+		});
+		throwDataErrors(branchResult.errors, 'ModelBranch create failed');
+		if (!branchResult.data || !ownedBy(branchResult.data, principal)) {
+			throw new Error('ModelBranch create returned no owned data.');
+		}
+		const branch = branchResult.data as ModelBranch;
+
+		const updateResult = await this.client.models.Pipeline.update({ id: pipeline.id, activeBranchId: branch.id });
+		throwDataErrors(updateResult.errors, 'Pipeline update failed');
+		if (!updateResult.data || !ownedBy(updateResult.data, principal)) {
+			throw new Error('Pipeline update returned no owned data.');
+		}
+		return { pipeline: updateResult.data as Pipeline, branch };
+	}
+
+	private async ownedModel(principal: McpPrincipal, modelId: string): Promise<ModelRegistryItem> {
+		const { data, errors } = await this.client.models.ModelRegistryItem.get({ id: requiredId(modelId, 'model_id') });
+		throwDataErrors(errors, 'ModelRegistryItem lookup failed');
+		if (!data || !ownedBy(data, principal)) throw new Error('Model not found.');
+		return data as ModelRegistryItem;
+	}
+
+	private async updateModel(
+		principal: McpPrincipal,
+		model: ModelRegistryItem,
+		patch: Record<string, unknown>
+	): Promise<ModelRegistryItem> {
+		const { data, errors } = await this.client.models.ModelRegistryItem.update({ id: model.id, ...patch });
+		throwDataErrors(errors, 'ModelRegistryItem update failed');
+		if (!data || !ownedBy(data, principal)) throw new Error('ModelRegistryItem update returned no owned data.');
+		return data as ModelRegistryItem;
 	}
 
 	/**
@@ -434,15 +606,37 @@ function syntheticAction(
 export function localLaunchRequest(runId: string, configJson: unknown): Record<string, unknown> {
 	const root = parsedRecord(configJson) ?? {};
 	const local = parsedRecord(root.local) ?? root;
+	const inferredHyperparams = Object.fromEntries(
+		Object.entries(local).filter(([key]) => !LOCAL_RUN_CONFIG_FIELDS.has(key))
+	);
 	return {
 		runId,
 		model_type: stringOr(local.model_type) ?? stringOr(local.modelType) ?? 'mlp',
 		feature_set: stringOr(local.feature_set) ?? stringOr(local.featureSet) ?? 'small',
 		neutralization_pct: numberOr(local.neutralization_pct) ?? numberOr(local.neutralizationPct) ?? 25,
-		hyperparams: parsedRecord(local.hyperparams) ?? {},
+		hyperparams: {
+			...inferredHyperparams,
+			...(parsedRecord(local.hyperparams) ?? {}),
+		},
 		upload: local.upload === true,
 	};
 }
+
+const LOCAL_RUN_CONFIG_FIELDS = new Set([
+	'mode',
+	'tournament',
+	'model_type',
+	'modelType',
+	'feature_set',
+	'featureSet',
+	'neutralization_pct',
+	'neutralizationPct',
+	'upload',
+	'hyperparams',
+	'modelId',
+	'modelName',
+	'sweep',
+]);
 
 const MAX_REPORT_TEXT = 8000;
 
@@ -488,6 +682,24 @@ function numberOr(value: unknown): number | null {
 	if (typeof value === 'number' && Number.isFinite(value)) return value;
 	if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
 	return null;
+}
+
+function finiteNumber(value: unknown): number | null {
+	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function modelTemplate(lineage: Record<string, unknown>): 'baseline' | 'challenger' | 'ensemble' | 'custom' {
+	const template = lineage.template;
+	return template === 'baseline' || template === 'challenger' || template === 'ensemble'
+		? template
+		: 'custom';
+}
+
+function modelStage(status: string): 'training' | 'success' | 'failed' {
+	const normalized = normalizeStatus(status);
+	if (normalized === 'completed') return 'success';
+	if (normalized === 'failed' || normalized === 'cancelled') return 'failed';
+	return 'training';
 }
 
 export function ownerSub(value: unknown): string | null {
@@ -602,6 +814,25 @@ function publicTrainingRun(run: TrainingRun) {
 		artifactUri: run.artifactUri ?? null,
 		createdAt: run.createdAt,
 		updatedAt: run.updatedAt,
+	};
+}
+
+function publicModel(model: ModelRegistryItem) {
+	const lineage = parsedRecord(model.lineageJson) ?? {};
+	const runConfig = parsedRecord(lineage.runConfig) ?? {};
+	return {
+		id: model.id,
+		name: model.name,
+		stage: model.stage ?? null,
+		pipelineId: model.pipelineId ?? null,
+		branchId: model.branchId ?? null,
+		runId: model.runId ?? null,
+		parentModelId: model.parentModelId ?? null,
+		changeSummary: model.changeSummary ?? null,
+		modelType: stringOr(runConfig.model_type) ?? stringOr(runConfig.modelType),
+		runConfig,
+		createdAt: model.createdAt,
+		updatedAt: model.updatedAt,
 	};
 }
 

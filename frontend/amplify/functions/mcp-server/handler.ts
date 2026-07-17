@@ -147,6 +147,20 @@ function createServer(principal: McpPrincipal): McpServer {
 		async (input) => toolResult(() => controlPlane.listTrainingRuns(principal, input))
 	);
 
+	registerTool<{ stage?: string; limit?: number }>(
+		'list_models',
+		{
+			description:
+				'List owned model drafts and their complete Builder runConfig. Use this to select any model type before launching it.',
+			inputSchema: {
+				stage: z.string().optional().describe('Optional draft/training/success/failed/testing/live/retired filter.'),
+				limit: z.number().int().min(1).max(100).optional(),
+			},
+			annotations: { readOnlyHint: true },
+		},
+		async (input) => toolResult(() => controlPlane.listModels(principal, input))
+	);
+
 	registerTool<{ provider_type?: string; status?: string; limit?: number }>(
 		'list_compute_providers',
 		{
@@ -190,6 +204,35 @@ function createServer(principal: McpPrincipal): McpServer {
 					runId: run_id,
 					providerId: provider_id,
 					computeType: compute_type,
+				})
+			)
+	);
+
+	registerTool<{
+		model_id: string;
+		provider_id: string;
+		compute_type?: string;
+		max_spend_usd?: number;
+	}>(
+		'launch_model_training',
+		{
+			description:
+				'Create and launch a new training run from an owned Builder model, preserving its full runConfig for every model type. Select provider_id with list_compute_providers. Local providers are queued for their normal worker; compute_type applies only to Modal.',
+			inputSchema: {
+				model_id: z.string().min(1),
+				provider_id: z.string().min(1),
+				compute_type: z.string().min(1).optional(),
+				max_spend_usd: z.number().nonnegative().optional(),
+			},
+			annotations: { destructiveHint: false, idempotentHint: false },
+		},
+		async ({ model_id, provider_id, compute_type, max_spend_usd }) =>
+			toolResult(() =>
+				controlPlane.launchModelTraining(principal, {
+					modelId: model_id,
+					providerId: provider_id,
+					computeType: compute_type,
+					maxSpendUsd: max_spend_usd,
 				})
 			)
 	);
