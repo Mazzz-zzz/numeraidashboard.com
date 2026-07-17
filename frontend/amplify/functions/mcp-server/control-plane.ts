@@ -42,7 +42,9 @@ export type McpDataClient = {
 		readonly ModelRegistryItem: {
 			list(args: unknown): DataResult<ModelRegistryItem[]>;
 			get(args: unknown): DataResult<ModelRegistryItem>;
+			create(args: unknown): DataResult<ModelRegistryItem>;
 			update(args: unknown): DataResult<ModelRegistryItem>;
+			delete(args: unknown): DataResult<ModelRegistryItem>;
 		};
 		readonly ComputeProvider: {
 			get(args: unknown): DataResult<ComputeProvider>;
@@ -67,6 +69,30 @@ export type McpDataClient = {
 
 export type McpPrincipal = {
 	readonly ownerSub: string;
+};
+
+export type CreateModelInput = {
+	readonly name?: string;
+	readonly modelType: string;
+	readonly runConfig?: Record<string, unknown>;
+	readonly changeSummary?: string;
+	readonly parentModelId?: string;
+	readonly template?: string;
+	readonly sweep?: {
+		readonly parameter: string;
+		readonly values: readonly (string | number | boolean)[];
+		readonly maxRuns?: number;
+	};
+};
+
+export type UpdateModelInput = {
+	readonly modelId: string;
+	readonly name?: string;
+	readonly stage?: string;
+	readonly changeSummary?: string | null;
+	readonly parentModelId?: string | null;
+	readonly numeraiModelId?: string | null;
+	readonly runConfig?: Record<string, unknown>;
 };
 
 export class McpControlPlane {
@@ -118,6 +144,98 @@ export class McpControlPlane {
 		return (data ?? [])
 			.filter((record) => ownedBy(record, principal))
 			.map(publicModel);
+	}
+
+	async createModel(principal: McpPrincipal, input: CreateModelInput) {
+		const modelType = requiredText(input.modelType, 'model_type').toLowerCase();
+		const suppliedConfig = input.runConfig ?? {};
+		const suppliedModelType = stringOr(suppliedConfig.model_type) ?? stringOr(suppliedConfig.modelType);
+		if (suppliedModelType && suppliedModelType.toLowerCase() !== modelType) {
+			throw new Error('model_type must match run_config.model_type/modelType.');
+		}
+		const parentModelId = input.parentModelId?.trim() || null;
+		if (parentModelId) await this.ownedModel(principal, parentModelId);
+
+		const baseName = input.name?.trim() || `${modelTypeLabel(modelType)} draft`;
+		const template = validatedModelTemplate(input.template);
+		const baseRunConfig: Record<string, unknown> = {
+			mode: 'train',
+			tournament: 'classic',
+			feature_set: 'small',
+			neutralization_pct: 25,
+			upload: false,
+			...suppliedConfig,
+			model_type: modelType,
+		};
+		delete baseRunConfig.modelType;
+
+		const sweep = normalizedSweep(input.sweep);
+		const candidates = sweep
+			? sweep.values.map((value) => ({
+				name: `${baseName} ${sweep.parameter}=${displaySweepValue(value)}`,
+				runConfig: { ...baseRunConfig, [sweep.parameter]: value },
+				sweep: { parameter: sweep.parameter, value, values: sweep.values },
+			}))
+			: [{ name: baseName, runConfig: baseRunConfig, sweep: null }];
+
+		const created: ModelRegistryItem[] = [];
+		for (const candidate of candidates) {
+			const changeSummary = input.changeSummary?.trim() ||
+				`${modelTypeLabel(modelType)} ${candidate.sweep ? `${candidate.sweep.parameter}=${displaySweepValue(candidate.sweep.value)}` : 'base'} draft`;
+			const { data, errors } = await this.client.models.ModelRegistryItem.create({
+				owner: principal.ownerSub,
+				name: candidate.name,
+				stage: 'draft',
+				parentModelId,
+				changeSummary,
+				numeraiModelId: null,
+				lineageJson: {
+					source: 'mcp',
+					template,
+					runConfig: candidate.runConfig,
+					sweep: candidate.sweep,
+				},
+			});
+			throwDataErrors(errors, 'ModelRegistryItem create failed');
+			if (!data || !ownedBy(data, principal)) {
+				throw new Error('ModelRegistryItem create returned no owned data.');
+			}
+			created.push(data as ModelRegistryItem);
+		}
+		return { count: created.length, models: created.map(publicModel) };
+	}
+
+	async updateModelDraft(principal: McpPrincipal, input: UpdateModelInput) {
+		const model = await this.ownedModel(principal, input.modelId);
+		const patch: Record<string, unknown> = {};
+		if (input.name !== undefined) patch.name = requiredText(input.name, 'name');
+		if (input.stage !== undefined) patch.stage = validatedModelStage(input.stage);
+		if (input.changeSummary !== undefined) patch.changeSummary = optionalText(input.changeSummary);
+		if (input.numeraiModelId !== undefined) patch.numeraiModelId = optionalText(input.numeraiModelId);
+		if (input.parentModelId !== undefined) {
+			const parentModelId = optionalText(input.parentModelId);
+			if (parentModelId === model.id) throw new Error('A model cannot be its own parent.');
+			if (parentModelId) await this.ownedModel(principal, parentModelId);
+			patch.parentModelId = parentModelId;
+		}
+		if (input.runConfig !== undefined) {
+			const modelType = stringOr(input.runConfig.model_type) ?? stringOr(input.runConfig.modelType);
+			if (!modelType) throw new Error('run_config requires model_type or modelType.');
+			const lineage = parsedRecord(model.lineageJson) ?? {};
+			const runConfig = { ...input.runConfig, model_type: modelType.toLowerCase() };
+			delete runConfig.modelType;
+			patch.lineageJson = { ...lineage, runConfig };
+		}
+		if (!Object.keys(patch).length) throw new Error('At least one model field must be provided.');
+		return publicModel(await this.updateModel(principal, model, patch));
+	}
+
+	async deleteModel(principal: McpPrincipal, input: { readonly modelId: string }) {
+		const model = await this.ownedModel(principal, input.modelId);
+		const { data, errors } = await this.client.models.ModelRegistryItem.delete({ id: model.id });
+		throwDataErrors(errors, 'ModelRegistryItem delete failed');
+		if (!data || !ownedBy(data, principal)) throw new Error('ModelRegistryItem delete returned no owned data.');
+		return { deleted: true, model: publicModel(data as ModelRegistryItem) };
 	}
 
 	async listComputeProviders(
@@ -686,6 +804,67 @@ function numberOr(value: unknown): number | null {
 
 function finiteNumber(value: unknown): number | null {
 	return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function requiredText(value: string | null | undefined, name: string): string {
+	const text = value?.trim();
+	if (!text) throw new Error(`${name} is required.`);
+	return text;
+}
+
+function optionalText(value: string | null | undefined): string | null {
+	return value?.trim() || null;
+}
+
+function validatedModelTemplate(value: string | null | undefined): 'baseline' | 'challenger' | 'ensemble' | 'custom' {
+	const normalized = value?.trim().toLowerCase() || 'custom';
+	if (normalized === 'baseline' || normalized === 'challenger' || normalized === 'ensemble' || normalized === 'custom') {
+		return normalized;
+	}
+	throw new Error('template must be baseline, challenger, ensemble, or custom.');
+}
+
+function validatedModelStage(value: string): 'draft' | 'training' | 'success' | 'failed' | 'testing' | 'live' | 'retired' {
+	const normalized = value.trim().toLowerCase();
+	if (
+		normalized === 'draft' || normalized === 'training' || normalized === 'success' ||
+		normalized === 'failed' || normalized === 'testing' || normalized === 'live' || normalized === 'retired'
+	) return normalized;
+	throw new Error('stage must be draft, training, success, failed, testing, live, or retired.');
+}
+
+function normalizedSweep(input: CreateModelInput['sweep']): {
+	readonly parameter: string;
+	readonly values: readonly (string | number | boolean)[];
+} | null {
+	if (!input) return null;
+	const parameter = requiredText(input.parameter, 'sweep.parameter');
+	const maxRuns = Math.max(1, Math.min(64, Math.trunc(input.maxRuns ?? input.values.length)));
+	const values = input.values.slice(0, maxRuns);
+	if (!values.length) throw new Error('sweep.values requires at least one value.');
+	if (values.some((value) => typeof value === 'number' && !Number.isFinite(value))) {
+		throw new Error('sweep.values numbers must be finite.');
+	}
+	return { parameter, values };
+}
+
+function displaySweepValue(value: string | number | boolean): string {
+	return typeof value === 'string' ? value : String(value);
+}
+
+function modelTypeLabel(modelType: string): string {
+	const labels: Record<string, string> = {
+		lgbm: 'LightGBM',
+		xgboost: 'XGBoost',
+		catboost: 'CatBoost',
+		mlp: 'MLP',
+		ft_transformer: 'FT-Transformer',
+		modern_nca: 'ModernNCA',
+		tabm: 'TabM',
+		tabpfn: 'TabPFN',
+		tabicl: 'TabICL',
+	};
+	return labels[modelType] ?? modelType;
 }
 
 function modelTemplate(lineage: Record<string, unknown>): 'baseline' | 'challenger' | 'ensemble' | 'custom' {
