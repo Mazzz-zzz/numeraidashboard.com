@@ -77,6 +77,9 @@ export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResul
 			oauth ? { 'www-authenticate': oauth.challenge(resource) } : {}
 		);
 	}
+	if (path === '/daemon/poll' || path === '/daemon/report') {
+		return daemonSync(path, principal, event);
+	}
 	const server = createServer(principal);
 	const transport = new WebStandardStreamableHTTPServerTransport({
 		sessionIdGenerator: undefined,
@@ -97,6 +100,35 @@ export const handler = async (event: FunctionUrlEvent): Promise<FunctionUrlResul
 		await server.close().catch(() => undefined);
 	}
 };
+
+async function daemonSync(
+	path: string,
+	principal: McpPrincipal,
+	event: FunctionUrlEvent
+): Promise<FunctionUrlResult> {
+	try {
+		if (path === '/daemon/poll') {
+			return jsonResponse(200, await controlPlane.pollDaemonWork(principal));
+		}
+		let body: unknown;
+		try {
+			body = JSON.parse(decodedBody(event) || '{}');
+		} catch {
+			return jsonResponse(400, { error: 'Daemon report body must be valid JSON.' });
+		}
+		const report = (body ?? {}) as { runId?: unknown; action?: unknown };
+		return jsonResponse(200, await controlPlane.reportDaemonAction(principal, report));
+	} catch (error) {
+		const message = error instanceof Error ? error.message : 'Daemon sync failed.';
+		console.error('MCP daemon sync failed', error);
+		return jsonResponse(400, { error: message });
+	}
+}
+
+function decodedBody(event: FunctionUrlEvent): string {
+	if (!event.body) return '';
+	return event.isBase64Encoded ? Buffer.from(event.body, 'base64').toString('utf8') : event.body;
+}
 
 function createServer(principal: McpPrincipal): McpServer {
 	const server = new McpServer({ name: 'numeraidashboard', version: '1.0.0' });

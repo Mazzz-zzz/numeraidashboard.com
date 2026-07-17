@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  Always-on local training daemon with cloud sync.
+
+  Install (see ml/local/README.md):
+    1. Replace __REPO__ with the absolute repo path and __PYTHON__ with your
+       python3 (e.g. the venv interpreter that has torch installed).
+    2. Fill in the MCP function URL and an API key from `npm run mcp:key`.
+    3. cp com.numeraidashboard.local-daemon.plist ~/Library/LaunchAgents/
+       launchctl load ~/Library/LaunchAgents/com.numeraidashboard.local-daemon.plist
+-->
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>com.numeraidashboard.local-daemon</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>__PYTHON__</string>
+		<string>__REPO__/ml/local/daemon.py</string>
+	</array>
+	<key>WorkingDirectory</key>
+	<string>__REPO__/ml</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>NUMERAI_DASHBOARD_MCP_URL</key>
+		<string>https://lacdatamelsv55cio7jpnn5jxe0yvuvm.lambda-url.ap-southeast-2.on.aws/</string>
+		<key>NUMERAI_DASHBOARD_API_KEY</key>
+		<string>nd_mcp_REPLACE_ME</string>
+		<key>PYTORCH_ENABLE_MPS_FALLBACK</key>
+		<string>1</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<true/>
+	<key>StandardOutPath</key>
+	<string>/tmp/numeraidashboard-local-daemon.log</string>
+	<key>StandardErrorPath</key>
+	<string>/tmp/numeraidashboard-local-daemon.log</string>
+</dict>
+</plist>

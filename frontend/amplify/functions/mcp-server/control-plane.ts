@@ -27,6 +27,7 @@ export type McpDataClient = {
 		};
 		readonly ComputeProvider: {
 			get(args: unknown): DataResult<ComputeProvider>;
+			list(args: unknown): DataResult<ComputeProvider[]>;
 		};
 		readonly ComputeJob: {
 			list(args: unknown): DataResult<ComputeJob[]>;
@@ -94,6 +95,18 @@ export class McpControlPlane {
 		const provider = await this.ownedProvider(principal, input.providerId ?? run.providerId);
 		if (provider.status === 'disabled') throw new Error(`Compute provider ${provider.id} is disabled.`);
 
+		// Local runs are executed by the user's daemon, which claims queued runs
+		// through /daemon/poll — the cloud mutation can't reach that machine.
+		if (isLocalProvider(provider)) {
+			const job = await this.jobForRun(principal, run.id);
+			return this.persistAction(
+				principal,
+				run,
+				provider,
+				syntheticAction('queued', job, 'Run queued for the local training daemon.'),
+				job
+			);
+		}
 		const action = await this.invokeTrainingMutation('start', principal, run, provider, null);
 		return this.persistAction(principal, run, provider, action);
 	}
@@ -102,13 +115,16 @@ export class McpControlPlane {
 		const run = await this.ownedRun(principal, input.runId);
 		const job = await this.jobForRun(principal, run.id);
 		const provider = await this.ownedProvider(principal, job?.providerId ?? run.providerId);
-		const action = await this.invokeTrainingMutation(
-			'poll',
-			principal,
-			run,
-			provider,
-			job?.providerJobId ?? null
-		);
+		// Local state is pushed by the daemon; re-invoking the cloud mutation would
+		// overwrite it with a synthetic 'queued'. Report what the daemon last wrote.
+		if (isLocalProvider(provider)) {
+			return {
+				action: publicAction(syntheticAction(run.status ?? 'queued', job, run.logTail ?? null, run)),
+				run: publicTrainingRun(run),
+				job: job ? publicComputeJob(job) : null,
+			};
+		}
+		const action = await this.invokeTrainingMutation('poll', principal, run, provider, job?.providerJobId ?? null);
 		return this.persistAction(principal, run, provider, action, job);
 	}
 
@@ -119,6 +135,15 @@ export class McpControlPlane {
 		}
 		const job = await this.jobForRun(principal, run.id);
 		const provider = await this.ownedProvider(principal, job?.providerId ?? run.providerId);
+		if (isLocalProvider(provider)) {
+			return this.persistAction(
+				principal,
+				run,
+				provider,
+				syntheticAction('cancelled', job, 'Cancellation requested; the local daemon will stop the job.'),
+				job
+			);
+		}
 		const action = await this.invokeTrainingMutation(
 			'cancel',
 			principal,
@@ -127,6 +152,77 @@ export class McpControlPlane {
 			job?.providerJobId ?? null
 		);
 		return this.persistAction(principal, run, provider, action, job);
+	}
+
+	/**
+	 * Work feed for the local daemon: queued runs on local providers to launch,
+	 * and cancelled runs whose local job hasn't reached a terminal state yet.
+	 */
+	async pollDaemonWork(principal: McpPrincipal) {
+		const localProviders = await this.localProviders(principal);
+		if (!localProviders.size) return { launches: [], cancels: [] };
+
+		const [queued, cancelled] = await Promise.all([
+			this.runsByStatus(principal, 'queued'),
+			this.runsByStatus(principal, 'cancelled'),
+		]);
+
+		const launches = [];
+		for (const run of queued) {
+			if (!run.providerId || !localProviders.has(run.providerId)) continue;
+			launches.push({
+				runId: run.id,
+				providerId: run.providerId,
+				request: localLaunchRequest(run.id, run.configJson),
+			});
+		}
+
+		const cancels = [];
+		for (const run of cancelled) {
+			if (!run.providerId || !localProviders.has(run.providerId)) continue;
+			const job = await this.jobForRun(principal, run.id);
+			if (!job || isTerminalStatus(job.status)) continue;
+			cancels.push({ runId: run.id, providerJobId: job.providerJobId ?? null });
+		}
+
+		return { launches, cancels };
+	}
+
+	/** Persist a status report pushed by the local daemon for an owned local run. */
+	async reportDaemonAction(
+		principal: McpPrincipal,
+		input: { readonly runId?: unknown; readonly action?: unknown }
+	) {
+		const run = await this.ownedRun(principal, typeof input.runId === 'string' ? input.runId : '');
+		const provider = await this.ownedProvider(principal, run.providerId);
+		if (!isLocalProvider(provider)) {
+			throw new Error(`Training run ${run.id} does not use a local compute provider.`);
+		}
+		const job = await this.jobForRun(principal, run.id);
+		const action = sanitizeReportedAction(input.action, job);
+		return this.persistAction(principal, run, provider, action, job);
+	}
+
+	private async localProviders(principal: McpPrincipal): Promise<Set<string>> {
+		const { data, errors } = await this.client.models.ComputeProvider.list({
+			filter: ownedFilter(principal, { providerType: { eq: 'local' } }),
+			limit: 50,
+		});
+		throwDataErrors(errors, 'ComputeProvider list failed');
+		return new Set(
+			(data ?? [])
+				.filter((record) => ownedBy(record, principal))
+				.map((record) => (record as ComputeProvider).id)
+		);
+	}
+
+	private async runsByStatus(principal: McpPrincipal, status: string): Promise<TrainingRun[]> {
+		const { data, errors } = await this.client.models.TrainingRun.list({
+			filter: ownedFilter(principal, { status: { eq: status } }),
+			limit: 50,
+		});
+		throwDataErrors(errors, 'TrainingRun list failed');
+		return (data ?? []).filter((record) => ownedBy(record, principal)) as TrainingRun[];
 	}
 
 	async listSubmissions(
@@ -244,6 +340,97 @@ export class McpControlPlane {
 
 export function hashMcpApiKey(rawKey: string): string {
 	return createHash('sha256').update(rawKey, 'utf8').digest('hex');
+}
+
+function isLocalProvider(provider: ComputeProvider): boolean {
+	return (provider.providerType ?? 'custom') === 'local';
+}
+
+function isTerminalStatus(status: string | null | undefined): boolean {
+	return status === 'completed' || status === 'failed' || status === 'cancelled';
+}
+
+function syntheticAction(
+	status: string,
+	job: ComputeJob | null,
+	logTail: string | null,
+	run?: TrainingRun
+): TrainingActionResult {
+	return {
+		ok: status !== 'failed',
+		status: normalizeStatus(status),
+		providerJobId: job?.providerJobId ?? null,
+		checkedAt: new Date().toISOString(),
+		logTail,
+		error: null,
+		costUsd: run?.costUsd ?? null,
+		metricsJson: run?.metricsJson ?? null,
+		artifactUri: run?.artifactUri ?? null,
+	} as TrainingActionResult;
+}
+
+/**
+ * Build the daemon /launch request from a run's configJson — mirrors the
+ * frontend's localLaunchRequest so browser- and daemon-claimed runs behave
+ * identically. Config may nest local settings under a `local` key.
+ */
+export function localLaunchRequest(runId: string, configJson: unknown): Record<string, unknown> {
+	const root = parsedRecord(configJson) ?? {};
+	const local = parsedRecord(root.local) ?? root;
+	return {
+		runId,
+		model_type: stringOr(local.model_type) ?? stringOr(local.modelType) ?? 'mlp',
+		feature_set: stringOr(local.feature_set) ?? stringOr(local.featureSet) ?? 'small',
+		neutralization_pct: numberOr(local.neutralization_pct) ?? numberOr(local.neutralizationPct) ?? 25,
+		hyperparams: parsedRecord(local.hyperparams) ?? {},
+		upload: local.upload === true,
+	};
+}
+
+const MAX_REPORT_TEXT = 8000;
+
+function sanitizeReportedAction(raw: unknown, job: ComputeJob | null): TrainingActionResult {
+	const record = asRecord(raw);
+	if (!record || typeof record.status !== 'string') {
+		throw new Error('A daemon report requires an action with a status.');
+	}
+	return {
+		ok: record.ok !== false,
+		status: normalizeStatus(record.status),
+		providerJobId: stringOr(record.providerJobId) ?? job?.providerJobId ?? null,
+		checkedAt: stringOr(record.checkedAt) ?? new Date().toISOString(),
+		logTail: clampText(record.logTail),
+		error: clampText(record.error),
+		costUsd: numberOr(record.costUsd),
+		metricsJson: asRecord(record.metricsJson),
+		artifactUri: clampText(record.artifactUri),
+	} as TrainingActionResult;
+}
+
+function clampText(value: unknown): string | null {
+	if (typeof value !== 'string' || !value.trim()) return null;
+	return value.length > MAX_REPORT_TEXT ? value.slice(-MAX_REPORT_TEXT) : value;
+}
+
+function parsedRecord(value: unknown): Record<string, unknown> | null {
+	const direct = asRecord(value);
+	if (direct) return direct;
+	if (typeof value !== 'string') return null;
+	try {
+		return asRecord(JSON.parse(value));
+	} catch {
+		return null;
+	}
+}
+
+function stringOr(value: unknown): string | null {
+	return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+function numberOr(value: unknown): number | null {
+	if (typeof value === 'number' && Number.isFinite(value)) return value;
+	if (typeof value === 'string' && value.trim() && Number.isFinite(Number(value))) return Number(value);
+	return null;
 }
 
 export function ownerSub(value: unknown): string | null {
