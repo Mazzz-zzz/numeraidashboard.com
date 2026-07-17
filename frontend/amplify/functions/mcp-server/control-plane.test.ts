@@ -181,17 +181,17 @@ describe('MCP control-plane security', () => {
 			owner: 'user-1',
 			name: 'Mac Studio TabM smoke',
 			stage: 'draft',
-			lineageJson: {
-				source: 'mcp',
-				template: 'challenger',
-				runConfig: {
-					mode: 'train', tournament: 'classic', feature_set: 'medium', neutralization_pct: 25,
-					upload: false, model_type: 'tabm', n_ensemble: 8, hidden_dims: [256, 128],
-					batch_size: 1024, max_train_eras: 2,
-				},
-				sweep: null,
-			},
 		}));
+		expect(JSON.parse(create.mock.calls[0]?.[0].lineageJson)).toEqual({
+			source: 'mcp',
+			template: 'challenger',
+			runConfig: {
+				mode: 'train', tournament: 'classic', feature_set: 'medium', neutralization_pct: 25,
+				upload: false, model_type: 'tabm', n_ensemble: 8, hidden_dims: [256, 128],
+				batch_size: 1024, max_train_eras: 2,
+			},
+			sweep: null,
+		});
 		expect(result).toEqual({
 			count: 1,
 			models: [expect.objectContaining({
@@ -221,14 +221,16 @@ describe('MCP control-plane security', () => {
 		expect(create).toHaveBeenCalledTimes(2);
 		expect(create.mock.calls[0]?.[0]).toMatchObject({
 			name: 'TabM ensemble sweep n_ensemble=4',
-			lineageJson: {
-				runConfig: { model_type: 'tabm', n_ensemble: 4 },
-				sweep: { parameter: 'n_ensemble', value: 4, values: [4, 8] },
-			},
+		});
+		expect(JSON.parse(create.mock.calls[0]?.[0].lineageJson)).toMatchObject({
+			runConfig: { model_type: 'tabm', n_ensemble: 4 },
+			sweep: { parameter: 'n_ensemble', value: 4, values: [4, 8] },
 		});
 		expect(create.mock.calls[1]?.[0]).toMatchObject({
 			name: 'TabM ensemble sweep n_ensemble=8',
-			lineageJson: { runConfig: { n_ensemble: 8 } },
+		});
+		expect(JSON.parse(create.mock.calls[1]?.[0].lineageJson)).toMatchObject({
+			runConfig: { n_ensemble: 8 },
 		});
 		expect(result.count).toBe(2);
 	});
@@ -260,9 +262,11 @@ describe('MCP control-plane security', () => {
 			{ ownerSub: 'user-1' },
 			{ modelId: 'model-1', name: 'TabM updated', runConfig: { model_type: 'tabm', n_ensemble: 4 } }
 		);
-		expect(update).toHaveBeenCalledWith({
+		expect(update).toHaveBeenCalledWith(expect.objectContaining({
 			id: 'model-1', name: 'TabM updated',
-			lineageJson: { source: 'mcp', runConfig: { model_type: 'tabm', n_ensemble: 4 } },
+		}));
+		expect(JSON.parse(update.mock.calls[0]?.[0].lineageJson)).toEqual({
+			source: 'mcp', runConfig: { model_type: 'tabm', n_ensemble: 4 },
 		});
 		expect(updated).toMatchObject({ name: 'TabM updated', modelType: 'tabm' });
 
@@ -343,11 +347,11 @@ describe('MCP control-plane security', () => {
 		expect(createRun).toHaveBeenCalledWith(expect.objectContaining({
 			owner: 'user-1', pipelineId: 'pipe-tabm', branchId: 'branch-tabm', providerId: 'provider-local',
 			modelTemplate: 'challenger', status: 'queued',
-			configJson: expect.objectContaining({
-				model_type: 'tabm', n_ensemble: 16, hidden_dims: [256, 128], max_train_eras: 20,
-				modelId: 'model-tabm', modelName: 'TabM K16',
-			}),
 		}));
+		expect(JSON.parse(createRun.mock.calls[0]?.[0].configJson)).toMatchObject({
+			model_type: 'tabm', n_ensemble: 16, hidden_dims: [256, 128], max_train_eras: 20,
+			modelId: 'model-tabm', modelName: 'TabM K16',
+		});
 		expect(client.mutations.startTraining).not.toHaveBeenCalled();
 		expect(result.action.status).toBe('queued');
 		expect(result.run.providerId).toBe('provider-local');
