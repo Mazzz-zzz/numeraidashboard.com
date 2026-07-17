@@ -5,6 +5,29 @@ CUDA) for the dashboard's **local** compute provider. Disk is the source of
 truth: each job lives under `ml/output/local-jobs/<jobId>/` with its request,
 status, logs, and artifacts.
 
+## Install model dependencies
+
+Training jobs import their model library inside the daemon's Python, so
+install the requirements into **the same interpreter the daemon runs under**
+(for launchd, whatever `__PYTHON__` resolves to in the plist):
+
+```sh
+python3 -m pip install -r ml/requirements.txt
+```
+
+Gotchas seen in practice:
+
+- **xgboost needs Python >= 3.10.** On an older interpreter pip skips the
+  pin and xgboost runs fail at claim time with `XGBoost not installed`.
+- **LightGBM on macOS needs libomp** — see the note at the top of
+  `ml/requirements.txt`.
+- The torch-based models (MLP, TabM, FT-Transformer, ModernNCA) and the
+  foundation models (TabPFN, TabICL) need the optional packages listed at the
+  bottom of `ml/requirements.txt`.
+
+A missing library only fails that model's runs — the daemon itself keeps
+running and reports the error back to the dashboard.
+
 ## Two ways the daemon receives work
 
 1. **Browser (local dev).** `npm run dev` starts the daemon automatically and
