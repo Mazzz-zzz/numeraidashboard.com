@@ -28,6 +28,7 @@ export type McpDataClient = {
 		readonly ComputeProvider: {
 			get(args: unknown): DataResult<ComputeProvider>;
 			list(args: unknown): DataResult<ComputeProvider[]>;
+			update(args: unknown): DataResult<ComputeProvider>;
 		};
 		readonly ComputeJob: {
 			list(args: unknown): DataResult<ComputeJob[]>;
@@ -180,9 +181,12 @@ export class McpControlPlane {
 		const cancels = [];
 		for (const run of cancelled) {
 			if (!run.providerId || !localProviders.has(run.providerId)) continue;
+			// MCP-launched runs have no ComputeJob row, so the cloud can't tell
+			// whether the daemon already acted — the daemon skips cancels whose
+			// local job is terminal (or absent), making repeats cheap no-ops.
 			const job = await this.jobForRun(principal, run.id);
-			if (!job || isTerminalStatus(job.status)) continue;
-			cancels.push({ runId: run.id, providerJobId: job.providerJobId ?? null });
+			if (job && isTerminalStatus(job.status)) continue;
+			cancels.push({ runId: run.id, providerJobId: job?.providerJobId ?? null });
 		}
 
 		return { launches, cancels };
@@ -200,6 +204,16 @@ export class McpControlPlane {
 		}
 		const job = await this.jobForRun(principal, run.id);
 		const action = sanitizeReportedAction(input.action, job);
+		// A user cancel must stay visible until the daemon acts on it: progress
+		// reports that raced the cancel would otherwise resurrect the run and the
+		// daemon would never see the cancellation in its work feed.
+		if (run.status === 'cancelled' && !isTerminalStatus(action.status)) {
+			return {
+				action: publicAction(syntheticAction('cancelled', job, run.logTail ?? null, run)),
+				run: publicTrainingRun(run),
+				job: job ? publicComputeJob(job) : null,
+			};
+		}
 		return this.persistAction(principal, run, provider, action, job);
 	}
 
@@ -209,11 +223,25 @@ export class McpControlPlane {
 			limit: 50,
 		});
 		throwDataErrors(errors, 'ComputeProvider list failed');
-		return new Set(
-			(data ?? [])
-				.filter((record) => ownedBy(record, principal))
-				.map((record) => (record as ComputeProvider).id)
-		);
+		const providers = (data ?? []).filter((record) => ownedBy(record, principal)) as ComputeProvider[];
+		await Promise.all(providers.map((provider) => this.touchDaemonHeartbeat(provider)));
+		return new Set(providers.map((provider) => provider.id));
+	}
+
+	/**
+	 * Each daemon poll refreshes the provider's verifiedAt so the settings UI
+	 * can show a live "daemon is polling" indicator. Throttled to one write per
+	 * minute per provider; a stale verifiedAt means the daemon is offline.
+	 */
+	private async touchDaemonHeartbeat(provider: ComputeProvider): Promise<void> {
+		const last = provider.verifiedAt ? Date.parse(provider.verifiedAt) : 0;
+		if (Number.isFinite(last) && Date.now() - last < 60_000) return;
+		const { errors } = await this.client.models.ComputeProvider.update({
+			id: provider.id,
+			verifiedAt: new Date().toISOString(),
+			lastVerifyError: null,
+		});
+		throwDataErrors(errors, 'ComputeProvider heartbeat failed');
 	}
 
 	private async runsByStatus(principal: McpPrincipal, status: string): Promise<TrainingRun[]> {
@@ -316,24 +344,24 @@ export class McpControlPlane {
 		throwDataErrors(runErrors, 'TrainingRun update failed');
 		if (!updatedRun || !ownedBy(updatedRun, principal)) throw new Error('TrainingRun update returned no data.');
 
+		// Update the run's ComputeJob when the browser created one. The Lambda
+		// cannot create job rows itself: CreateComputeJobInput has no owner field
+		// (owner is auto-set only for user-pool writes), so an IAM-side create
+		// either fails or produces an unowned row. The TrainingRun row carries
+		// all state the UI and MCP tools read.
 		const job = existingJob ?? (await this.jobForRun(principal, run.id));
-		const jobPatch = computeJobPatch(action);
-		const jobResult = job
-			? await this.client.models.ComputeJob.update({ id: job.id, ...jobPatch })
-			: await this.client.models.ComputeJob.create({
-					owner: principal.ownerSub,
-					providerId: provider.id,
-					runId: run.id,
-					name: `MCP training ${run.id}`,
-					...jobPatch,
-				});
-		throwDataErrors(jobResult.errors, 'ComputeJob write failed');
-		if (!jobResult.data || !ownedBy(jobResult.data, principal)) throw new Error('ComputeJob write returned no data.');
+		let updatedJob: ComputeJob | null = null;
+		if (job) {
+			const jobResult = await this.client.models.ComputeJob.update({ id: job.id, ...computeJobPatch(action) });
+			throwDataErrors(jobResult.errors, 'ComputeJob write failed');
+			if (!jobResult.data || !ownedBy(jobResult.data, principal)) throw new Error('ComputeJob write returned no data.');
+			updatedJob = jobResult.data as ComputeJob;
+		}
 
 		return {
 			action: publicAction(action),
 			run: publicTrainingRun(updatedRun as TrainingRun),
-			job: publicComputeJob(jobResult.data as ComputeJob),
+			job: updatedJob ? publicComputeJob(updatedJob) : null,
 		};
 	}
 }

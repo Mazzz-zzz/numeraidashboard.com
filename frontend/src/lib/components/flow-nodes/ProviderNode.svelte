@@ -12,6 +12,7 @@
 			sub: string;
 			logoSrc?: string | null;
 			linked: boolean;
+			daemonOnline?: boolean;
 		};
 		selected?: boolean;
 	} = $props();
@@ -20,7 +21,7 @@
 		prime_intellect: 'Prime Intellect',
 		modal: 'Modal',
 		sagemaker: 'SageMaker',
-		local: 'Local',
+		local: 'Local machine',
 		custom: 'Custom'
 	};
 </script>
@@ -64,7 +65,7 @@
 		<strong>{data.label}</strong>
 		<span class="sub">{data.sub}</span>
 	</div>
-	<span class="dot" class:on={data.linked}></span>
+	<span class="dot" class:on={data.linked} class:pulse={data.daemonOnline}></span>
 </div>
 
 <style>
@@ -125,4 +126,9 @@
 		background: var(--text-muted);
 	}
 	.dot.on { background: var(--green); box-shadow: 0 0 0 2px rgba(26, 127, 55, 0.18); }
+	.dot.pulse { animation: daemon-pulse 2s ease-in-out infinite; }
+	@keyframes daemon-pulse {
+		0%, 100% { box-shadow: 0 0 0 2px rgba(26, 127, 55, 0.18); }
+		50% { box-shadow: 0 0 0 6px rgba(26, 127, 55, 0.05); }
+	}
 </style>

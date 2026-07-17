@@ -141,7 +141,10 @@ describe('MCP control-plane security', () => {
 			})
 		);
 		expect(startTraining.mock.calls[0]?.[0]).not.toHaveProperty('providerJobId');
-		expect(createJob).toHaveBeenCalledWith(expect.objectContaining({ owner: 'user-1', runId: 'run-1' }));
+		// CreateComputeJobInput has no owner field, so the Lambda never creates
+		// job rows — state lands on the TrainingRun and job stays null.
+		expect(createJob).not.toHaveBeenCalled();
+		expect(result.job).toBeNull();
 		expect(result.action.providerJobId).toBe('modal-job-1');
 	});
 });
@@ -159,6 +162,9 @@ describe('MCP control-plane local daemon sync', () => {
 			configJson: JSON.stringify({ local: { model_type: 'lgbm', feature_set: 'medium', hyperparams: { num_rounds: 500 } } }),
 		};
 		const provider = { id: 'provider-local', owner: 'user-1', name: 'Mac Studio', providerType: 'local', status: 'available' };
+		const updateProvider = vi.fn().mockResolvedValue({
+			data: { ...provider, verifiedAt: new Date().toISOString() },
+		});
 		return {
 			run,
 			provider,
@@ -172,6 +178,7 @@ describe('MCP control-plane local daemon sync', () => {
 					ComputeProvider: {
 						get: vi.fn().mockResolvedValue({ data: provider }),
 						list: vi.fn().mockResolvedValue({ data: [provider] }),
+						update: updateProvider,
 					},
 					ComputeJob: {
 						list: vi.fn().mockResolvedValue({ data: [] }),
@@ -230,6 +237,13 @@ describe('MCP control-plane local daemon sync', () => {
 
 		const work = await plane.pollDaemonWork(principal);
 
+		expect(client.models.ComputeProvider.update).toHaveBeenCalledWith(
+			expect.objectContaining({
+				id: 'provider-local',
+				verifiedAt: expect.any(String),
+				lastVerifyError: null,
+			})
+		);
 		expect(work.cancels).toEqual([]);
 		expect(work.launches).toEqual([
 			{
@@ -270,5 +284,42 @@ describe('MCP control-plane local daemon sync', () => {
 		await expect(
 			plane.reportDaemonAction(principal, { runId: 'run-1', action: {} })
 		).rejects.toThrow(/requires an action/);
+	});
+});
+
+describe('MCP control-plane cancel/report race', () => {
+	it('drops non-terminal daemon reports on a cancelled run so the cancel stays visible', async () => {
+		const run = {
+			id: 'run-1', owner: 'user-1', pipelineId: 'pipe-1', providerId: 'provider-local',
+			status: 'cancelled', logTail: 'cancel requested',
+		};
+		const update = vi.fn();
+		const client = {
+			models: {
+				TrainingRun: { get: vi.fn().mockResolvedValue({ data: run }), update },
+				ComputeProvider: {
+					get: vi.fn().mockResolvedValue({
+						data: { id: 'provider-local', owner: 'user-1', name: 'Mac', providerType: 'local', status: 'available' },
+					}),
+				},
+				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+			},
+		};
+		const plane = new McpControlPlane(client as never);
+
+		const dropped = await plane.reportDaemonAction(
+			{ ownerSub: 'user-1' },
+			{ runId: 'run-1', action: { status: 'running', logTail: 'epoch 9' } }
+		);
+		expect(update).not.toHaveBeenCalled();
+		expect(dropped.action.status).toBe('cancelled');
+
+		update.mockResolvedValue({ data: { ...run, finishedAt: '2026-07-17T12:00:00.000Z' } });
+		const accepted = await plane.reportDaemonAction(
+			{ ownerSub: 'user-1' },
+			{ runId: 'run-1', action: { status: 'cancelled', logTail: 'stopped' } }
+		);
+		expect(update).toHaveBeenCalledWith(expect.objectContaining({ id: 'run-1', status: 'cancelled' }));
+		expect(accepted.action.status).toBe('cancelled');
 	});
 });

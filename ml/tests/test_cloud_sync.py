@@ -105,6 +105,19 @@ def test_tick_cancels_running_local_job(tmp_path):
                for path, body in posts)
 
 
+def test_tick_ignores_repeated_cancel_for_terminal_local_job(tmp_path):
+    daemon = FakeDaemon(tmp_path)
+    _write_job(tmp_path, "local-run-b-1", "run-b", "cancelled")
+    work = {"launches": [], "cancels": [{"runId": "run-b", "providerJobId": None}]}
+    sync, posts = _sync_with_work(daemon, tmp_path, work)
+
+    sync.tick()
+    assert daemon.cancelled == []
+    reports = [body for path, body in posts if path == "/daemon/report"]
+    assert len(reports) == 1
+    assert reports[0]["action"]["status"] == "cancelled"
+
+
 def test_tick_skips_unchanged_status_reports(tmp_path):
     daemon = FakeDaemon(tmp_path)
     _write_job(tmp_path, "local-run-c-1", "run-c", "running")

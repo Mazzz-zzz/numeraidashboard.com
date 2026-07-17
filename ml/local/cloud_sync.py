@@ -143,9 +143,11 @@ class CloudSync:
             run_id = str(cancel.get("runId") or "").strip()
             if not run_id:
                 continue
-            job_id = str(cancel.get("providerJobId") or "") or latest_job_id(index, run_id)
+            # The cloud keeps listing a cancelled run until it can tell the
+            # daemon acted; only act while our local job is still alive.
+            job_id = active_job_id(index, run_id)
             if not job_id or not (self._jobs_dir / job_id).exists():
-                continue  # nothing local to stop; leave cloud state as-is
+                continue  # nothing local left to stop — repeat entries are no-ops
             result = self._daemon.cancel(job_id)
             print(f"[cloud-sync] cancelled run {run_id} ({job_id})")
             self._send_report(run_id, result)

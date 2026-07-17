@@ -12,6 +12,7 @@
 
 <div class="node" class:selected>
 	<Handle type="target" position={Position.Top} id="top" />
+	<Handle type="source" position={Position.Right} id="right" />
 	<div class="glyph">
 		<svg viewBox="0 0 32 32" aria-hidden="true">
 			<circle cx="13" cy="13" r="6" fill="none" stroke="currentColor" stroke-width="1.6" />
