@@ -147,18 +147,51 @@ function createServer(principal: McpPrincipal): McpServer {
 		async (input) => toolResult(() => controlPlane.listTrainingRuns(principal, input))
 	);
 
-	registerTool<{ run_id: string; provider_id?: string }>(
+	registerTool<{ provider_type?: string; status?: string; limit?: number }>(
+		'list_compute_providers',
+		{
+			description:
+				'List safe metadata for compute providers owned by the authenticated user. Use this before selecting a provider_id for a launch.',
+			inputSchema: {
+				provider_type: z
+					.string()
+					.optional()
+					.describe('Optional prime_intellect/modal/sagemaker/local/custom filter.'),
+				status: z.string().optional().describe('Optional available/planned/disabled filter.'),
+				limit: z.number().int().min(1).max(100).optional(),
+			},
+			annotations: { readOnlyHint: true },
+		},
+		async ({ provider_type, status, limit }) =>
+			toolResult(() =>
+				controlPlane.listComputeProviders(principal, { providerType: provider_type, status, limit })
+			)
+	);
+
+	registerTool<{ run_id: string; provider_id?: string; compute_type?: string }>(
 		'launch_training_run',
 		{
-			description: 'Launch a queued training run through its configured compute provider.',
+			description:
+				'Launch a queued training run through its configured compute provider, or through an explicit provider_id from list_compute_providers. Modal launches may set compute_type to cpu or a supported GPU type.',
 			inputSchema: {
 				run_id: z.string().min(1),
 				provider_id: z.string().min(1).optional(),
+				compute_type: z
+					.string()
+					.min(1)
+					.optional()
+					.describe('Optional Modal compute type such as cpu, t4, a10g, l4, a100, or h100.'),
 			},
 			annotations: { destructiveHint: false, idempotentHint: false },
 		},
-		async ({ run_id, provider_id }) =>
-			toolResult(() => controlPlane.launchTrainingRun(principal, { runId: run_id, providerId: provider_id }))
+		async ({ run_id, provider_id, compute_type }) =>
+			toolResult(() =>
+				controlPlane.launchTrainingRun(principal, {
+					runId: run_id,
+					providerId: provider_id,
+					computeType: compute_type,
+				})
+			)
 	);
 
 	registerTool<{ run_id: string }>(

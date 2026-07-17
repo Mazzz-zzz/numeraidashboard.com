@@ -85,9 +85,26 @@ export class McpControlPlane {
 			.map(publicTrainingRun);
 	}
 
+	async listComputeProviders(
+		principal: McpPrincipal,
+		input: { readonly providerType?: string; readonly status?: string; readonly limit?: number } = {}
+	) {
+		const conditions: Record<string, unknown>[] = [];
+		if (input.providerType?.trim()) conditions.push({ providerType: { eq: input.providerType.trim() } });
+		if (input.status?.trim()) conditions.push({ status: { eq: input.status.trim() } });
+		const { data, errors } = await this.client.models.ComputeProvider.list({
+			filter: ownedFilter(principal, ...conditions),
+			limit: boundedLimit(input.limit),
+		});
+		throwDataErrors(errors, 'ComputeProvider list failed');
+		return (data ?? [])
+			.filter((record) => ownedBy(record, principal))
+			.map(publicComputeProvider);
+	}
+
 	async launchTrainingRun(
 		principal: McpPrincipal,
-		input: { readonly runId: string; readonly providerId?: string }
+		input: { readonly runId: string; readonly providerId?: string; readonly computeType?: string }
 	) {
 		const run = await this.ownedRun(principal, input.runId);
 		if (run.status === 'running' || run.status === 'completed') {
@@ -95,6 +112,10 @@ export class McpControlPlane {
 		}
 		const provider = await this.ownedProvider(principal, input.providerId ?? run.providerId);
 		if (provider.status === 'disabled') throw new Error(`Compute provider ${provider.id} is disabled.`);
+		const computeType = input.computeType?.trim().toLowerCase() || null;
+		if (computeType && provider.providerType !== 'modal') {
+			throw new Error('compute_type is currently supported only for Modal providers.');
+		}
 
 		// Local runs are executed by the user's daemon, which claims queued runs
 		// through /daemon/poll — the cloud mutation can't reach that machine.
@@ -108,7 +129,7 @@ export class McpControlPlane {
 				job
 			);
 		}
-		const action = await this.invokeTrainingMutation('start', principal, run, provider, null);
+		const action = await this.invokeTrainingMutation('start', principal, run, provider, null, computeType);
 		return this.persistAction(principal, run, provider, action);
 	}
 
@@ -308,7 +329,8 @@ export class McpControlPlane {
 		principal: McpPrincipal,
 		run: TrainingRun,
 		provider: ComputeProvider,
-		providerJobId: string | null
+		providerJobId: string | null,
+		computeType: string | null = null
 	): Promise<TrainingActionResult> {
 		const baseArgs = {
 			runId: run.id,
@@ -318,7 +340,10 @@ export class McpControlPlane {
 			apiSecretRef: provider.apiSecretRef ?? null,
 			baseUrl: provider.baseUrl ?? null,
 			workspaceId: provider.workspaceId ?? null,
-			providerConfigJson: serializeAwsJson(provider.credentialsJson),
+			providerConfigJson:
+				operation === 'start'
+					? providerConfigForMcpLaunch(run, provider, computeType)
+					: serializeAwsJson(provider.credentialsJson),
 			ownerSub: principal.ownerSub,
 		};
 		const result =
@@ -339,7 +364,7 @@ export class McpControlPlane {
 		action: TrainingActionResult,
 		existingJob?: ComputeJob | null
 	) {
-		const runPatch = trainingRunPatch(run, action);
+		const runPatch = trainingRunPatch(run, provider, action);
 		const { data: updatedRun, errors: runErrors } = await this.client.models.TrainingRun.update(runPatch);
 		throwDataErrors(runErrors, 'TrainingRun update failed');
 		if (!updatedRun || !ownedBy(updatedRun, principal)) throw new Error('TrainingRun update returned no data.');
@@ -352,7 +377,11 @@ export class McpControlPlane {
 		const job = existingJob ?? (await this.jobForRun(principal, run.id));
 		let updatedJob: ComputeJob | null = null;
 		if (job) {
-			const jobResult = await this.client.models.ComputeJob.update({ id: job.id, ...computeJobPatch(action) });
+			const jobResult = await this.client.models.ComputeJob.update({
+				id: job.id,
+				providerId: provider.id,
+				...computeJobPatch(action),
+			});
 			throwDataErrors(jobResult.errors, 'ComputeJob write failed');
 			if (!jobResult.data || !ownedBy(jobResult.data, principal)) throw new Error('ComputeJob write returned no data.');
 			updatedJob = jobResult.data as ComputeJob;
@@ -525,11 +554,14 @@ function normalizeStatus(status: string): 'queued' | 'running' | 'completed' | '
 	}
 }
 
-function trainingRunPatch(run: TrainingRun, action: TrainingActionResult) {
+function trainingRunPatch(run: TrainingRun, provider: ComputeProvider, action: TrainingActionResult) {
 	const status = normalizeStatus(action.status);
 	const terminal = ['completed', 'failed', 'cancelled'].includes(status);
 	return {
 		id: run.id,
+		// provider_id is an explicit launch override. Persist it so later polls,
+		// cancellation, UI state, and local-daemon claims use the actual provider.
+		providerId: provider.id,
 		status,
 		...(status === 'running' ? { startedAt: run.startedAt ?? action.checkedAt } : {}),
 		...(terminal ? { finishedAt: action.checkedAt } : {}),
@@ -561,6 +593,7 @@ function publicTrainingRun(run: TrainingRun) {
 		providerId: run.providerId ?? null,
 		modelTemplate: run.modelTemplate ?? null,
 		status: run.status ?? null,
+		configJson: run.configJson ?? null,
 		metricsJson: run.metricsJson ?? null,
 		costUsd: run.costUsd ?? null,
 		startedAt: run.startedAt ?? null,
@@ -569,6 +602,26 @@ function publicTrainingRun(run: TrainingRun) {
 		artifactUri: run.artifactUri ?? null,
 		createdAt: run.createdAt,
 		updatedAt: run.updatedAt,
+	};
+}
+
+function publicComputeProvider(provider: ComputeProvider) {
+	return {
+		id: provider.id,
+		name: provider.name,
+		providerType: provider.providerType ?? null,
+		status: provider.status ?? null,
+		baseUrl: provider.baseUrl ?? null,
+		workspaceId: provider.workspaceId ?? null,
+		awsRegion: provider.awsRegion ?? null,
+		verifiedAt: provider.verifiedAt ?? null,
+		lastVerifyError: provider.lastVerifyError ?? null,
+		monthlyBudgetUsd: provider.monthlyBudgetUsd ?? null,
+		defaultRunCapUsd: provider.defaultRunCapUsd ?? null,
+		maxConcurrentJobs: provider.maxConcurrentJobs ?? null,
+		notes: provider.notes ?? null,
+		createdAt: provider.createdAt,
+		updatedAt: provider.updatedAt,
 	};
 }
 
@@ -621,6 +674,65 @@ function publicAction(action: TrainingActionResult) {
 function serializeAwsJson(value: unknown): string | null {
 	if (value === null || value === undefined) return null;
 	return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+const RUN_CONFIG_METADATA_KEYS = new Set([
+	'modelId',
+	'modelName',
+	'sweep',
+	'modal',
+	'local',
+	'primeIntellect',
+	'prime_intellect',
+	'computeType',
+	'gpuType',
+	'gpu',
+	'hyperparams',
+]);
+
+/**
+ * MCP launches do not pass through the browser's providerConfigForLaunch.
+ * Compose the Modal launch payload here so the run keeps its hyperparameters
+ * and the MCP caller can explicitly request CPU compute.
+ */
+function providerConfigForMcpLaunch(
+	run: TrainingRun,
+	provider: ComputeProvider,
+	computeType: string | null
+): string | null {
+	if (provider.providerType !== 'modal') return serializeAwsJson(provider.credentialsJson);
+
+	const providerRoot = parsedRecord(provider.credentialsJson) ?? {};
+	const providerModal = parsedRecord(providerRoot.modal) ?? {};
+	const runRoot = parsedRecord(run.configJson) ?? {};
+	const runModal = parsedRecord(runRoot.modal) ?? {};
+	const topLevelHyperparams = Object.fromEntries(
+		Object.entries(runRoot).filter(([key]) => !RUN_CONFIG_METADATA_KEYS.has(key))
+	);
+	const hyperparams = {
+		...(parsedRecord(providerModal.hyperparams) ?? {}),
+		...topLevelHyperparams,
+		...(parsedRecord(runRoot.hyperparams) ?? {}),
+		...(parsedRecord(runModal.hyperparams) ?? {}),
+	};
+	const selectedCompute =
+		computeType ??
+		stringOr(runModal.computeType) ??
+		stringOr(runModal.gpuType) ??
+		stringOr(runModal.gpu) ??
+		stringOr(runRoot.computeType) ??
+		stringOr(runRoot.gpuType) ??
+		stringOr(runRoot.gpu);
+
+	return JSON.stringify({
+		...providerRoot,
+		modal: {
+			...providerModal,
+			...runModal,
+			...(selectedCompute ? { gpuType: selectedCompute.toLowerCase() } : {}),
+			hyperparams,
+		},
+	});
 }
 
 function timestamp(value: string | null | undefined): number {

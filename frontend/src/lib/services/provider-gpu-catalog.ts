@@ -17,6 +17,7 @@ const fallbackGpuCatalogs: Partial<Record<ProviderType, readonly GpuOption[]>> =
 	],
 	modal: [
 		{ value: 't4', label: 'T4' },
+		{ value: 'cpu', label: 'CPU · 8 cores' },
 		{ value: 'a10g', label: 'A10G' },
 		{ value: 'l4', label: 'L4' },
 		{ value: 'a100', label: 'A100 40GB' },
