@@ -735,6 +735,28 @@ describe('MCP control-plane local daemon sync', () => {
 			plane.reportDaemonAction(principal, { runId: 'run-1', action: {} })
 		).rejects.toThrow(/requires an action/);
 	});
+
+	it('serializes completion metrics so the daemon report survives the AWSJSON mutation', async () => {
+		const { client } = localClient();
+		const plane = new McpControlPlane(client as never);
+		const metrics = { ensemble: { correlation: 0.0073, sharpe: 0.81 }, elapsedSeconds: 392.8 };
+
+		const result = await plane.reportDaemonAction(principal, {
+			runId: 'run-1',
+			action: {
+				ok: true,
+				status: 'completed',
+				providerJobId: 'local-run-1-123',
+				metricsJson: metrics,
+				artifactUri: '/jobs/local-run-1-123/output',
+			},
+		});
+
+		expect(result.action.status).toBe('completed');
+		expect(client.models.TrainingRun.update).toHaveBeenCalledWith(
+			expect.objectContaining({ id: 'run-1', status: 'completed', metricsJson: JSON.stringify(metrics) })
+		);
+	});
 });
 
 describe('MCP control-plane cancel/report race', () => {
