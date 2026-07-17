@@ -189,12 +189,12 @@ export class McpControlPlane {
 				parentModelId,
 				changeSummary,
 				numeraiModelId: null,
-				lineageJson: {
+				lineageJson: serializeAwsJson({
 					source: 'mcp',
 					template,
 					runConfig: candidate.runConfig,
 					sweep: candidate.sweep,
-				},
+				}),
 			});
 			throwDataErrors(errors, 'ModelRegistryItem create failed');
 			if (!data || !ownedBy(data, principal)) {
@@ -316,12 +316,12 @@ export class McpControlPlane {
 			providerId: provider.id,
 			modelTemplate: modelTemplate(lineage),
 			status: 'queued',
-			configJson: {
+			configJson: serializeAwsJson({
 				...runConfig,
 				modelId: model.id,
 				modelName: model.name,
 				sweep: parsedRecord(lineage.sweep) ?? {},
-			},
+			}),
 			costUsd: finiteNumber(input.maxSpendUsd),
 		});
 		throwDataErrors(runErrors, 'TrainingRun create failed');
@@ -484,7 +484,7 @@ export class McpControlPlane {
 			}
 		}
 
-		const graphJson = { lineage };
+		const graphJson = serializeAwsJson({ lineage });
 		const pipelineResult = await this.client.models.Pipeline.create({
 			owner: principal.ownerSub,
 			name: model.name,
@@ -533,7 +533,13 @@ export class McpControlPlane {
 		model: ModelRegistryItem,
 		patch: Record<string, unknown>
 	): Promise<ModelRegistryItem> {
-		const { data, errors } = await this.client.models.ModelRegistryItem.update({ id: model.id, ...patch });
+		const normalizedPatch = patch.lineageJson === undefined
+			? patch
+			: {
+				...patch,
+				lineageJson: patch.lineageJson === null ? null : serializeAwsJson(patch.lineageJson),
+			};
+		const { data, errors } = await this.client.models.ModelRegistryItem.update({ id: model.id, ...normalizedPatch });
 		throwDataErrors(errors, 'ModelRegistryItem update failed');
 		if (!data || !ownedBy(data, principal)) throw new Error('ModelRegistryItem update returned no owned data.');
 		return data as ModelRegistryItem;
