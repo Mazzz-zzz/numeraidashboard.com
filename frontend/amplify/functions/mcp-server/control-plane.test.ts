@@ -156,6 +156,127 @@ describe('MCP control-plane security', () => {
 		]);
 	});
 
+	it('creates an owner-scoped TabM Builder draft with defaults and complete model configuration', async () => {
+		const create = vi.fn().mockImplementation(async (input) => ({
+			data: { id: 'model-tabm', createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z', ...input },
+		}));
+		const plane = new McpControlPlane({
+			models: { ModelRegistryItem: { create } },
+		} as never);
+
+		const result = await plane.createModel(
+			{ ownerSub: 'user-1' },
+			{
+				name: 'Mac Studio TabM smoke',
+				modelType: 'tabm',
+				template: 'challenger',
+				runConfig: {
+					feature_set: 'medium', n_ensemble: 8, hidden_dims: [256, 128],
+					batch_size: 1024, max_train_eras: 2,
+				},
+			}
+		);
+
+		expect(create).toHaveBeenCalledWith(expect.objectContaining({
+			owner: 'user-1',
+			name: 'Mac Studio TabM smoke',
+			stage: 'draft',
+			lineageJson: {
+				source: 'mcp',
+				template: 'challenger',
+				runConfig: {
+					mode: 'train', tournament: 'classic', feature_set: 'medium', neutralization_pct: 25,
+					upload: false, model_type: 'tabm', n_ensemble: 8, hidden_dims: [256, 128],
+					batch_size: 1024, max_train_eras: 2,
+				},
+				sweep: null,
+			},
+		}));
+		expect(result).toEqual({
+			count: 1,
+			models: [expect.objectContaining({
+				id: 'model-tabm', name: 'Mac Studio TabM smoke', stage: 'draft', modelType: 'tabm',
+				runConfig: expect.objectContaining({ model_type: 'tabm', n_ensemble: 8, max_train_eras: 2 }),
+			})],
+		});
+	});
+
+	it('creates a bounded sweep as independent launchable model drafts', async () => {
+		let id = 0;
+		const create = vi.fn().mockImplementation(async (input) => ({
+			data: { id: `model-${++id}`, createdAt: '2026-07-17T00:00:00.000Z', updatedAt: '2026-07-17T00:00:00.000Z', ...input },
+		}));
+		const plane = new McpControlPlane({ models: { ModelRegistryItem: { create } } } as never);
+
+		const result = await plane.createModel(
+			{ ownerSub: 'user-1' },
+			{
+				name: 'TabM ensemble sweep',
+				modelType: 'tabm',
+				runConfig: { max_train_eras: 1 },
+				sweep: { parameter: 'n_ensemble', values: [4, 8, 16], maxRuns: 2 },
+			}
+		);
+
+		expect(create).toHaveBeenCalledTimes(2);
+		expect(create.mock.calls[0]?.[0]).toMatchObject({
+			name: 'TabM ensemble sweep n_ensemble=4',
+			lineageJson: {
+				runConfig: { model_type: 'tabm', n_ensemble: 4 },
+				sweep: { parameter: 'n_ensemble', value: 4, values: [4, 8] },
+			},
+		});
+		expect(create.mock.calls[1]?.[0]).toMatchObject({
+			name: 'TabM ensemble sweep n_ensemble=8',
+			lineageJson: { runConfig: { n_ensemble: 8 } },
+		});
+		expect(result.count).toBe(2);
+	});
+
+	it('rejects contradictory model types before creating a draft', async () => {
+		const create = vi.fn();
+		const plane = new McpControlPlane({ models: { ModelRegistryItem: { create } } } as never);
+
+		await expect(plane.createModel(
+			{ ownerSub: 'user-1' },
+			{ modelType: 'tabm', runConfig: { model_type: 'lgbm' } }
+		)).rejects.toThrow(/must match/);
+		expect(create).not.toHaveBeenCalled();
+	});
+
+	it('updates and deletes only owner-scoped model records', async () => {
+		let model = {
+			id: 'model-1', owner: 'user-1', name: 'Old', stage: 'draft',
+			lineageJson: { source: 'mcp', runConfig: { model_type: 'lgbm' } },
+		};
+		const get = vi.fn().mockImplementation(async () => ({ data: model }));
+		const update = vi.fn().mockImplementation(async (patch) => ({ data: (model = { ...model, ...patch }) }));
+		const remove = vi.fn().mockImplementation(async () => ({ data: model }));
+		const plane = new McpControlPlane({
+			models: { ModelRegistryItem: { get, update, delete: remove } },
+		} as never);
+
+		const updated = await plane.updateModelDraft(
+			{ ownerSub: 'user-1' },
+			{ modelId: 'model-1', name: 'TabM updated', runConfig: { model_type: 'tabm', n_ensemble: 4 } }
+		);
+		expect(update).toHaveBeenCalledWith({
+			id: 'model-1', name: 'TabM updated',
+			lineageJson: { source: 'mcp', runConfig: { model_type: 'tabm', n_ensemble: 4 } },
+		});
+		expect(updated).toMatchObject({ name: 'TabM updated', modelType: 'tabm' });
+
+		await expect(plane.deleteModel(
+			{ ownerSub: 'user-1' }, { modelId: 'model-1' }
+		)).resolves.toMatchObject({ deleted: true, model: { id: 'model-1' } });
+		expect(remove).toHaveBeenCalledWith({ id: 'model-1' });
+
+		get.mockResolvedValueOnce({ data: { ...model, owner: 'user-2' } });
+		await expect(plane.deleteModel(
+			{ ownerSub: 'user-1' }, { modelId: 'model-1' }
+		)).rejects.toThrow('Model not found.');
+	});
+
 	it('creates and queues an owned TabM run from a Builder model on the local provider', async () => {
 		let model = {
 			id: 'model-tabm', owner: 'user-1', name: 'TabM K16', stage: 'draft',

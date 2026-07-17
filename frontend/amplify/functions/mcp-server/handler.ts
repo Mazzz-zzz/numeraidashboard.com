@@ -6,7 +6,13 @@ import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/
 import { z } from 'zod';
 import { env } from '$amplify/env/mcp-server';
 import type { Schema } from '../../data/resource';
-import { McpControlPlane, type McpDataClient, type McpPrincipal } from './control-plane';
+import {
+	McpControlPlane,
+	type CreateModelInput,
+	type McpDataClient,
+	type McpPrincipal,
+	type UpdateModelInput,
+} from './control-plane';
 import { McpOAuthAuthenticator } from './oauth';
 
 type FunctionUrlEvent = {
@@ -159,6 +165,91 @@ function createServer(principal: McpPrincipal): McpServer {
 			annotations: { readOnlyHint: true },
 		},
 		async (input) => toolResult(() => controlPlane.listModels(principal, input))
+	);
+
+	registerTool<{
+		name?: string;
+		model_type: string;
+		run_config?: Record<string, unknown>;
+		change_summary?: string;
+		parent_model_id?: string;
+		template?: string;
+		sweep?: { parameter: string; values: (string | number | boolean)[]; max_runs?: number };
+	}>(
+		'create_model',
+		{
+			description:
+				'Create one owned Builder model draft, or multiple drafts when sweep is supplied. The complete run_config is preserved for launch_model_training; model-specific fields are supported for every model type.',
+			inputSchema: {
+				name: z.string().min(1).optional(),
+				model_type: z.string().min(1).describe('Model type such as lgbm, xgboost, catboost, mlp, ft_transformer, modern_nca, tabm, tabpfn, or tabicl.'),
+				run_config: z.record(z.unknown()).optional().describe('Complete Builder runConfig. Defaults for mode, tournament, feature_set, neutralization_pct, and upload are added when omitted.'),
+				change_summary: z.string().optional(),
+				parent_model_id: z.string().min(1).optional(),
+				template: z.enum(['baseline', 'challenger', 'ensemble', 'custom']).optional(),
+				sweep: z.object({
+					parameter: z.string().min(1),
+					values: z.array(z.union([z.string(), z.number(), z.boolean()])).min(1).max(64),
+					max_runs: z.number().int().min(1).max(64).optional(),
+				}).optional(),
+			},
+			annotations: { destructiveHint: false, idempotentHint: false },
+		},
+		async ({ name, model_type, run_config, change_summary, parent_model_id, template, sweep }) =>
+			toolResult(() => controlPlane.createModel(principal, {
+				name,
+				modelType: model_type,
+				runConfig: run_config,
+				changeSummary: change_summary,
+				parentModelId: parent_model_id,
+				template,
+				sweep: sweep ? { parameter: sweep.parameter, values: sweep.values, maxRuns: sweep.max_runs } : undefined,
+			} satisfies CreateModelInput))
+	);
+
+	registerTool<{
+		model_id: string;
+		name?: string;
+		stage?: string;
+		change_summary?: string | null;
+		parent_model_id?: string | null;
+		numerai_model_id?: string | null;
+		run_config?: Record<string, unknown>;
+	}>(
+		'update_model',
+		{
+			description: 'Update an owned model record, including its Builder runConfig or lifecycle metadata.',
+			inputSchema: {
+				model_id: z.string().min(1),
+				name: z.string().min(1).optional(),
+				stage: z.enum(['draft', 'training', 'success', 'failed', 'testing', 'live', 'retired']).optional(),
+				change_summary: z.string().nullable().optional(),
+				parent_model_id: z.string().min(1).nullable().optional(),
+				numerai_model_id: z.string().nullable().optional(),
+				run_config: z.record(z.unknown()).optional(),
+			},
+			annotations: { destructiveHint: false, idempotentHint: true },
+		},
+		async ({ model_id, name, stage, change_summary, parent_model_id, numerai_model_id, run_config }) =>
+			toolResult(() => controlPlane.updateModelDraft(principal, {
+				modelId: model_id,
+				name,
+				stage,
+				changeSummary: change_summary,
+				parentModelId: parent_model_id,
+				numeraiModelId: numerai_model_id,
+				runConfig: run_config,
+			} satisfies UpdateModelInput))
+	);
+
+	registerTool<{ model_id: string }>(
+		'delete_model',
+		{
+			description: 'Permanently delete an owned model registry item. Related training records are retained.',
+			inputSchema: { model_id: z.string().min(1) },
+			annotations: { destructiveHint: true, idempotentHint: false },
+		},
+		async ({ model_id }) => toolResult(() => controlPlane.deleteModel(principal, { modelId: model_id }))
 	);
 
 	registerTool<{ provider_type?: string; status?: string; limit?: number }>(

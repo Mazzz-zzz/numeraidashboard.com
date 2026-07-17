@@ -123,15 +123,32 @@ Configure an API-key client with the deployed URL and header:
 }
 ```
 
-Tools are `list_models`, `launch_model_training`, `list_training_runs`,
-`list_compute_providers`, `launch_training_run`, `poll_training_status`,
-`cancel_run`, and `list_submissions`. `launch_model_training` turns any owned
-Builder model into a new run while preserving its complete `runConfig`; callers
-therefore do not need to create a `TrainingRun` in the browser first. The Lambda has IAM
+Tools are `create_model`, `list_models`, `update_model`, `delete_model`,
+`launch_model_training`, `list_training_runs`, `list_compute_providers`,
+`launch_training_run`, `poll_training_status`, `cancel_run`, and
+`list_submissions`. `create_model` accepts the same complete `runConfig` stored
+by the Builder and optionally expands one sweep parameter into up to 64 owned
+drafts. `launch_model_training` turns any owned draft into a new run while
+preserving that configuration; callers therefore do not need to use the browser
+or create a `TrainingRun` first. The Lambda has IAM
 access to the Data API, but every read and write is checked again against the
 authenticated Cognito subject before provider credentials or workflow rows are
 used. `launch_training_run` accepts `compute_type: "cpu"` for remote Modal CPU
 jobs; it does not route those jobs through the local daemon.
+
+Model-tool lifecycle:
+
+1. Call `create_model` with `model_type` and any model-specific `run_config`
+   fields. Omitted routing fields receive the Builder defaults.
+2. For a sweep, include `{ "parameter": "…", "values": […], "max_runs": … }`;
+   each returned model is independently launchable.
+3. Select an owned provider with `list_compute_providers`, then call
+   `launch_model_training` with the returned model ID.
+4. Monitor it with `poll_training_status`; local work is claimed by the normal
+   daemon polling flow.
+5. Use `update_model` for configuration or lifecycle metadata, and
+   `delete_model` for an explicit destructive registry deletion. Training-run
+   history is retained when a registry item is deleted.
 
 The Lambda never connects to a workstation directly. Instead, runs on `local`
 compute providers stay `queued` until the machine's training daemon claims

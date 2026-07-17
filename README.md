@@ -100,14 +100,37 @@ submissions remotely:
 https://lacdatamelsv55cio7jpnn5jxe0yvuvm.lambda-url.ap-southeast-2.on.aws/
 ```
 
-Tools: `list_models`, `launch_model_training`, `list_training_runs`,
-`list_compute_providers`, `launch_training_run`, `poll_training_status`,
-`cancel_run`, `list_submissions`. `list_models` returns each Builder draft's
-complete `runConfig`; `launch_model_training` creates an owned run from that
-configuration and launches it on the selected provider, so TabM and every
-other model type do not need a pre-existing `TrainingRun`. Every tool call is
-scoped to the authenticated user's records. Modal launches can request remote CPU compute with
+Tools: `create_model`, `list_models`, `update_model`, `delete_model`,
+`launch_model_training`, `list_training_runs`, `list_compute_providers`,
+`launch_training_run`, `poll_training_status`, `cancel_run`, and
+`list_submissions`. `create_model` mirrors the Builder: it accepts a complete
+`run_config` and can create up to 64 independent model drafts from a sweep.
+`list_models` returns each draft's complete `runConfig`; `launch_model_training`
+creates an owned run from that configuration and launches it on the selected
+provider, so TabM and every other model type do not need a browser-created
+`TrainingRun`. Every tool call is scoped to the authenticated user's records.
+Modal launches can request remote CPU compute with
 `{"run_id":"…","compute_type":"cpu"}`; this path does not use the local daemon.
+
+For example, an agent can create and launch a small local TabM candidate without
+opening the Builder:
+
+```json
+{
+  "name": "Mac Studio TabM smoke",
+  "model_type": "tabm",
+  "run_config": {
+    "feature_set": "small",
+    "n_ensemble": 4,
+    "batch_size": 1024,
+    "max_train_eras": 2
+  }
+}
+```
+
+Pass the returned model ID and a local provider ID to `launch_model_training`.
+The hosted MCP queues the run; the normal workstation worker claims it. It does
+not call the workstation daemon directly or fall back to Modal.
 
 Two authentication paths are supported:
 
