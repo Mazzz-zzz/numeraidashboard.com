@@ -36,7 +36,8 @@ describe('Scalar documentation', () => {
 			'launch_training_run',
 			'poll_training_status',
 			'cancel_run',
-			'list_submissions'
+			'list_submissions',
+			'get_numerai_account'
 		];
 		const serialized = JSON.stringify(docsSpec);
 		for (const tool of expectedTools) expect(serialized).toContain(tool);

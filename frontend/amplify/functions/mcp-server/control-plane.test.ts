@@ -798,3 +798,83 @@ describe('MCP control-plane cancel/report race', () => {
 		expect(accepted.action.status).toBe('cancelled');
 	});
 });
+
+describe('MCP control-plane Numerai account', () => {
+	const principal = { ownerSub: 'user-1' };
+
+	function accountClient(records: unknown[]) {
+		return {
+			models: {
+				NumeraiAccount: { list: vi.fn().mockResolvedValue({ data: records }) },
+			},
+		};
+	}
+
+	const ownedAccount = {
+		id: 'acct-1', owner: 'user-1::person@example.com', label: 'Main',
+		publicId: 'PUBLICID12345678', secretRef: '/numeraidashboard/user-1/numerai/secret-key',
+		verifiedAt: '2026-07-17T12:00:00.000Z', lastVerifyError: null,
+	};
+
+	it('reports when no Numerai account is linked', async () => {
+		const plane = new McpControlPlane(accountClient([]) as never);
+		await expect(plane.getNumeraiAccount(principal)).resolves.toMatchObject({
+			connected: false,
+			error: expect.stringMatching(/Settings/),
+		});
+	});
+
+	it('ignores accounts owned by other users', async () => {
+		const foreign = { ...ownedAccount, id: 'acct-2', owner: 'user-9::other@example.com' };
+		const plane = new McpControlPlane(accountClient([foreign]) as never);
+		await expect(plane.getNumeraiAccount(principal)).resolves.toMatchObject({ connected: false });
+	});
+
+	it('returns the account with live Numerai models and never leaks the secret', async () => {
+		const getSecret = vi.fn().mockResolvedValue('raw-secret-value');
+		const numeraiQuery = vi.fn().mockResolvedValue({
+			data: {
+				account: {
+					username: 'mazstudio', id: 'numerai-acct-1',
+					models: [{ id: 'nm-1', name: 'MAZ_MODEL_1', tournament: 8 }],
+				},
+			},
+		});
+		const plane = new McpControlPlane(accountClient([ownedAccount]) as never, { getSecret, numeraiQuery });
+
+		const result = await plane.getNumeraiAccount(principal);
+
+		expect(getSecret).toHaveBeenCalledWith(ownedAccount.secretRef);
+		expect(numeraiQuery).toHaveBeenCalledWith(
+			`${ownedAccount.publicId}$raw-secret-value`,
+			expect.stringContaining('account')
+		);
+		expect(result).toMatchObject({
+			connected: true,
+			label: 'Main',
+			username: 'mazstudio',
+			numeraiAccountId: 'numerai-acct-1',
+			numeraiModels: [{ id: 'nm-1', name: 'MAZ_MODEL_1', tournament: 8 }],
+		});
+		const serialized = JSON.stringify(result);
+		expect(serialized).not.toContain('raw-secret-value');
+		expect(serialized).not.toContain(ownedAccount.secretRef);
+		expect(serialized).not.toContain(ownedAccount.publicId);
+	});
+
+	it('returns account metadata without live lookup when deps are not configured', async () => {
+		const plane = new McpControlPlane(accountClient([ownedAccount]) as never);
+		await expect(plane.getNumeraiAccount(principal)).resolves.toMatchObject({
+			connected: true,
+			numeraiModels: null,
+		});
+	});
+
+	it('surfaces Numerai API rejections as errors', async () => {
+		const plane = new McpControlPlane(accountClient([ownedAccount]) as never, {
+			getSecret: vi.fn().mockResolvedValue('raw-secret-value'),
+			numeraiQuery: vi.fn().mockResolvedValue({ errors: [{ message: 'Invalid token' }] }),
+		});
+		await expect(plane.getNumeraiAccount(principal)).rejects.toThrow(/Invalid token/);
+	});
+});

@@ -7,6 +7,7 @@ type ComputeProvider = Schema['ComputeProvider']['type'];
 type ModelBranch = Schema['ModelBranch']['type'];
 type ModelRegistryItem = Schema['ModelRegistryItem']['type'];
 type ModelSubmission = Schema['ModelSubmission']['type'];
+type NumeraiAccount = Schema['NumeraiAccount']['type'];
 type Pipeline = Schema['Pipeline']['type'];
 type TrainingActionResult = NonNullable<Schema['TrainingActionResult']['type']>;
 type TrainingRun = Schema['TrainingRun']['type'];
@@ -59,6 +60,9 @@ export type McpDataClient = {
 		readonly ModelSubmission: {
 			list(args: unknown): DataResult<ModelSubmission[]>;
 		};
+		readonly NumeraiAccount: {
+			list(args: unknown): DataResult<NumeraiAccount[]>;
+		};
 	};
 	readonly mutations: {
 		startTraining(args: unknown): DataResult<TrainingActionResult>;
@@ -95,8 +99,16 @@ export type UpdateModelInput = {
 	readonly runConfig?: Record<string, unknown>;
 };
 
+export type McpControlPlaneDeps = {
+	readonly getSecret?: (ref: string) => Promise<string>;
+	readonly numeraiQuery?: (authToken: string, query: string) => Promise<Record<string, unknown>>;
+};
+
 export class McpControlPlane {
-	constructor(private readonly client: McpDataClient) {}
+	constructor(
+		private readonly client: McpDataClient,
+		private readonly deps: McpControlPlaneDeps = {}
+	) {}
 
 	async authenticate(rawKey: string | null | undefined): Promise<McpPrincipal | null> {
 		if (!isMcpApiKey(rawKey)) return null;
@@ -144,6 +156,55 @@ export class McpControlPlane {
 		return (data ?? [])
 			.filter((record) => ownedBy(record, principal))
 			.map(publicModel);
+	}
+
+	async getNumeraiAccount(principal: McpPrincipal) {
+		const { data, errors } = await this.client.models.NumeraiAccount.list({
+			filter: ownedFilter(principal),
+			limit: 10,
+		});
+		throwDataErrors(errors, 'NumeraiAccount list failed');
+		const accounts = (data ?? []).filter((record) => ownedBy(record, principal));
+		if (!accounts.length) {
+			return {
+				connected: false,
+				error: 'No Numerai account is linked. Connect one in the dashboard Settings page.',
+			};
+		}
+
+		const account = accounts[0] as NumeraiAccount;
+		const summary = {
+			connected: true,
+			label: account.label ?? null,
+			publicId: maskedCredential(account.publicId),
+			verifiedAt: account.verifiedAt ?? null,
+			lastVerifyError: account.lastVerifyError ?? null,
+		};
+
+		const { getSecret, numeraiQuery } = this.deps;
+		if (!getSecret || !numeraiQuery || !account.secretRef) {
+			return { ...summary, username: null, numeraiModels: null };
+		}
+		const secret = await getSecret(account.secretRef);
+		const body = await numeraiQuery(`${account.publicId}$${secret}`, NUMERAI_ACCOUNT_QUERY);
+		const graphqlErrors = (body as { errors?: { message?: string }[] }).errors;
+		if (graphqlErrors?.length) {
+			throw new Error(`Numerai API rejected the account lookup: ${graphqlErrors[0]?.message ?? 'unknown error'}`);
+		}
+		const remote = (body as {
+			data?: { account?: { username?: string; id?: string; models?: { id?: string; name?: string; tournament?: number }[] } };
+		}).data?.account;
+		if (!remote) throw new Error('Numerai API returned no account data.');
+		return {
+			...summary,
+			username: remote.username ?? null,
+			numeraiAccountId: remote.id ?? null,
+			numeraiModels: (remote.models ?? []).map((model) => ({
+				id: model.id ?? null,
+				name: model.name ?? null,
+				tournament: model.tournament ?? null,
+			})),
+		};
 	}
 
 	async createModel(principal: McpPrincipal, input: CreateModelInput) {
@@ -1104,6 +1165,13 @@ function publicAction(action: TrainingActionResult) {
 function serializeAwsJson(value: unknown): string | null {
 	if (value === null || value === undefined) return null;
 	return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+const NUMERAI_ACCOUNT_QUERY = 'query { account { username id models { id name tournament } } }';
+
+function maskedCredential(value: string | null | undefined): string | null {
+	if (!value) return null;
+	return value.length <= 8 ? '****' : `${value.slice(0, 4)}…${value.slice(-4)}`;
 }
 
 const RUN_CONFIG_METADATA_KEYS = new Set([

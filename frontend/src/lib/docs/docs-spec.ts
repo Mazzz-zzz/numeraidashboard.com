@@ -317,6 +317,11 @@ const toolSchemas: Record<string, Schema> = {
 		description: 'Input for list_submissions. Creating submissions is not currently exposed through MCP.',
 		properties: { model_id: id('Optional owned model filter.'), status: string('Optional submission-status filter.'), limit }
 	},
+	GetNumeraiAccountInput: {
+		type: 'object',
+		description: 'Input for get_numerai_account. Takes no arguments. Returns the linked Numerai account (masked public ID, verification status, username) and its Numerai models; use the returned model ids with update_model.numerai_model_id. Secrets are never returned.',
+		properties: {}
+	},
 	JsonRpcToolCall: {
 		type: 'object',
 		description: 'MCP JSON-RPC tools/call envelope. MCP clients construct this automatically.',
@@ -332,7 +337,7 @@ const toolSchemas: Record<string, Schema> = {
 					name: string('Public MCP tool name.', undefined, [
 						'list_models', 'create_model', 'update_model', 'delete_model', 'list_compute_providers',
 						'list_training_runs', 'launch_model_training', 'launch_training_run', 'poll_training_status',
-						'cancel_run', 'list_submissions'
+						'cancel_run', 'list_submissions', 'get_numerai_account'
 					]),
 					arguments: { type: 'object', additionalProperties: true }
 				}
