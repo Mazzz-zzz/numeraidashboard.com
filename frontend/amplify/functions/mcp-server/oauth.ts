@@ -35,7 +35,8 @@ export class McpOAuthAuthenticator {
 		this.verifier =
 			verifier ??
 			JwtVerifier.create({
-				issuer: trimTrailingSlash(this.authorizationServer),
+				// Auth0 mints iss with the trailing slash; the check is an exact match.
+				issuer: this.authorizationServer,
 				audience: null, // audience is the per-request resource URL, checked below
 				jwksUri: new URL('/.well-known/jwks.json', this.authorizationServer).toString(),
 			});
