@@ -1,9 +1,9 @@
 import { dataClient } from '$lib/data';
 import { requireAuthSession } from '$lib/auth';
 import type { Schema } from '../../../amplify/data/resource';
-import type { ComputeJobStatus, ComputeProvider } from './compute-service';
+import type { ComputeJob, ComputeJobStatus, ComputeProvider } from './compute-service';
 import type { TrainingRun } from './pipeline-service';
-import { cancelLocalTraining, launchLocalTraining, pollLocalTraining } from './local-training-service';
+import { cancelLocalTraining } from './local-training-service';
 
 /** Local runs execute on the user's machine via the local daemon, not AWS. */
 function isLocalProvider(provider: ComputeProvider): boolean {
@@ -21,6 +21,12 @@ export type TrainingActionInput = {
 	readonly provider: ComputeProvider;
 	readonly providerJobId?: string | null;
 	readonly providerConfigJson?: unknown;
+};
+
+export type LocalTrainingSnapshot = {
+	readonly action: TrainingActionResult;
+	readonly run: TrainingRun;
+	readonly job: ComputeJob | null;
 };
 
 export function serializeAwsJsonArg(value: unknown): string | null {
@@ -160,10 +166,10 @@ export async function startTrainingRun(
 ): Promise<TrainingActionResult> {
 	await requireAuthSession();
 	if (isLocalProvider(input.provider)) {
-		return launchLocalTraining({
-			runId: input.runId,
-			provider: input.provider,
-			providerConfigJson: input.providerConfigJson ?? input.provider.credentialsJson
+		return localControlAction({
+			status: 'queued',
+			providerJobId: null,
+			logTail: 'Run queued for the local training daemon.'
 		});
 	}
 	const { data, errors } = await client.mutations.startTraining({
@@ -207,11 +213,7 @@ export async function pollTrainingRunStatus(
 ): Promise<TrainingActionResult> {
 	await requireAuthSession();
 	if (isLocalProvider(input.provider)) {
-		return pollLocalTraining({
-			runId: input.runId,
-			provider: input.provider,
-			providerJobId: input.providerJobId ?? null
-		});
+		return (await readLocalTrainingSnapshot(input, client)).action;
 	}
 	const { data, errors } = await client.mutations.pollTrainingStatus({
 		runId: input.runId,
@@ -223,4 +225,76 @@ export async function pollTrainingRunStatus(
 	if (errors?.length) throw new Error(errors[0].message);
 	if (!data) throw new Error('pollTrainingStatus returned no data');
 	return data as TrainingActionResult;
+}
+
+/**
+ * Read local training state from the cloud mirror maintained by the Mac daemon.
+ *
+ * A deployed browser cannot reach the workstation through the relative
+ * `/local-daemon` development proxy. More importantly, polling that route from
+ * the hosted SPA returns HTML and used to overwrite valid daemon-pushed state
+ * with a synthetic failure. The daemon is the sole writer for local execution
+ * progress; browser and MCP clients only read its cloud mirror.
+ */
+export async function readLocalTrainingSnapshot(
+	input: Pick<TrainingActionInput, 'runId' | 'providerJobId'>,
+	client: Client = dataClient()
+): Promise<LocalTrainingSnapshot> {
+	await requireAuthSession();
+	const [runResult, jobsResult] = await Promise.all([
+		client.models.TrainingRun.get({ id: input.runId }),
+		client.models.ComputeJob.list({ filter: { runId: { eq: input.runId } }, limit: 20 })
+	]);
+	throwDataErrors(runResult.errors, `TrainingRun.get failed for run ${input.runId}`);
+	throwDataErrors(jobsResult.errors, `ComputeJob.list failed for run ${input.runId}`);
+	if (!runResult.data) throw new Error(`TrainingRun.get returned no data for run ${input.runId}`);
+
+	const run = runResult.data as TrainingRun;
+	const job = ((jobsResult.data ?? []) as ComputeJob[])
+		.sort((a, b) => timestamp(b.updatedAt) - timestamp(a.updatedAt))[0] ?? null;
+	const status = normalizeTrainingActionStatus(run.status ?? job?.status ?? 'queued');
+	const logTail = run.logTail ?? job?.logTail ?? null;
+	const action = localControlAction({
+		status,
+		providerJobId: job?.providerJobId ?? input.providerJobId ?? null,
+		checkedAt: run.updatedAt ?? job?.updatedAt ?? new Date().toISOString(),
+		logTail,
+		error: status === 'failed' ? logTail : null,
+		costUsd: run.costUsd ?? job?.actualCostUsd ?? null,
+		metricsJson: run.metricsJson ?? null,
+		artifactUri: run.artifactUri ?? null
+	});
+	return { action, run, job };
+}
+
+function localControlAction(input: {
+	readonly status: NormalizedTrainingStatus;
+	readonly providerJobId: string | null;
+	readonly checkedAt?: string;
+	readonly logTail?: string | null;
+	readonly error?: string | null;
+	readonly costUsd?: number | null;
+	readonly metricsJson?: TrainingActionResult['metricsJson'];
+	readonly artifactUri?: string | null;
+}): TrainingActionResult {
+	return {
+		ok: input.status !== 'failed',
+		status: input.status,
+		providerJobId: input.providerJobId,
+		checkedAt: input.checkedAt ?? new Date().toISOString(),
+		logTail: input.logTail ?? null,
+		error: input.error ?? null,
+		costUsd: input.costUsd ?? null,
+		metricsJson: input.metricsJson ?? null,
+		artifactUri: input.artifactUri ?? null
+	} as TrainingActionResult;
+}
+
+function throwDataErrors(errors: readonly { readonly message?: string | null }[] | undefined, fallback: string) {
+	if (!errors?.length) return;
+	throw new Error(errors.map((error) => error.message).filter(Boolean).join('; ') || fallback);
+}
+
+function timestamp(value: string | null | undefined): number {
+	return value ? Date.parse(value) || 0 : 0;
 }
