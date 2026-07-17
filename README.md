@@ -101,8 +101,11 @@ submissions remotely:
 https://lacdatamelsv55cio7jpnn5jxe0yvuvm.lambda-url.ap-southeast-2.on.aws/
 ```
 
-The complete MCP guide and tool reference live in [`docs/mcp/`](docs/mcp/introduction.md)
-and are configured as a Scalar Docs 2.0 project by `scalar.config.json`. Preview
+The deployed Scalar reference is available at
+[numeraidashboard.com/docs](https://numeraidashboard.com/docs). It documents the MCP wire
+contract, every public tool input, and every supported trainer model. The longer MCP guides
+live in [`docs/mcp/`](docs/mcp/introduction.md) and are also configured as a Scalar Docs 2.0
+project by `scalar.config.json`. Preview
 them locally from the repository root with:
 
 ```sh

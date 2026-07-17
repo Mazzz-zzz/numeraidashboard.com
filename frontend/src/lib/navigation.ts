@@ -22,7 +22,7 @@ export const authenticatedNavItems: readonly NavItem[] = [
 	{ href: '/settings', label: 'Settings' }
 ] as const;
 
-export const fullbleedRoutePrefixes = ['/settings'] as const;
+export const fullbleedRoutePrefixes = ['/docs', '/settings'] as const;
 
 export function primaryNavItems(isAuthenticated: boolean): readonly NavItem[] {
 	return isAuthenticated ? [dashboardNavItem, ...authenticatedNavItems] : [dashboardNavItem, docsNavItem];

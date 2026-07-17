@@ -333,7 +333,10 @@ describe('MCP control-plane security', () => {
 					update: updateRun,
 				},
 				ComputeProvider: { get: vi.fn().mockResolvedValue({ data: provider }) },
-				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+				ComputeJob: {
+					list: vi.fn().mockResolvedValue({ data: [] }),
+					create: vi.fn().mockImplementation(async (input) => ({ data: { id: 'job-tabm', ...input } })),
+				},
 			},
 			mutations: { startTraining: vi.fn() },
 		};
@@ -355,6 +358,7 @@ describe('MCP control-plane security', () => {
 		expect(client.mutations.startTraining).not.toHaveBeenCalled();
 		expect(result.action.status).toBe('queued');
 		expect(result.run.providerId).toBe('provider-local');
+		expect(result.job).toMatchObject({ id: 'job-tabm', runId: 'run-tabm', providerId: 'provider-local' });
 		expect(result.model).toMatchObject({ id: 'model-tabm', stage: 'training', runId: 'run-tabm', modelType: 'tabm' });
 		expect(localLaunchRequest('run-tabm', result.run.configJson)).toEqual({
 			runId: 'run-tabm',
@@ -439,10 +443,15 @@ describe('MCP control-plane security', () => {
 			})
 		);
 		expect(startTraining.mock.calls[0]?.[0]).not.toHaveProperty('providerJobId');
-		// CreateComputeJobInput has no owner field, so the Lambda never creates
-		// job rows — state lands on the TrainingRun and job stays null.
-		expect(createJob).not.toHaveBeenCalled();
-		expect(result.job).toBeNull();
+		expect(createJob).toHaveBeenCalledWith(expect.objectContaining({
+			owner: 'user-1',
+			providerId: 'provider-1',
+			runId: 'run-1',
+			name: 'MCP training run-1',
+			status: 'queued',
+			providerJobId: 'modal-job-1',
+		}));
+		expect(result.job).toMatchObject({ id: 'job-1', runId: 'run-1', providerId: 'provider-1' });
 		expect(result.action.providerJobId).toBe('modal-job-1');
 	});
 
@@ -473,7 +482,10 @@ describe('MCP control-plane security', () => {
 						},
 					}),
 				},
-				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+				ComputeJob: {
+					list: vi.fn().mockResolvedValue({ data: [] }),
+					create: vi.fn().mockImplementation(async (input) => ({ data: { id: 'job-cpu', ...input } })),
+				},
 			},
 			mutations: { startTraining },
 		};
@@ -579,8 +591,12 @@ describe('MCP control-plane local daemon sync', () => {
 		const result = await plane.launchTrainingRun(principal, { runId: 'run-1' });
 
 		expect(client.mutations.startTraining).not.toHaveBeenCalled();
+		expect(client.models.ComputeJob.create).toHaveBeenCalledWith(expect.objectContaining({
+			owner: 'user-1', providerId: 'provider-local', runId: 'run-1', status: 'queued',
+		}));
 		expect(result.action.status).toBe('queued');
 		expect(result.action.logTail).toContain('local training daemon');
+		expect(result.job).toMatchObject({ id: 'job-1', runId: 'run-1' });
 	});
 
 	it('persists a provider override so later operations use the selected provider', async () => {
@@ -600,7 +616,10 @@ describe('MCP control-plane local daemon sync', () => {
 						},
 					}),
 				},
-				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+				ComputeJob: {
+					list: vi.fn().mockResolvedValue({ data: [] }),
+					create: vi.fn().mockImplementation(async (input) => ({ data: { id: 'job-local', ...input } })),
+				},
 			},
 			mutations: { startTraining },
 		};
@@ -620,6 +639,12 @@ describe('MCP control-plane local daemon sync', () => {
 	it('reports daemon-pushed state on poll instead of overwriting it', async () => {
 		const { client, run } = localClient();
 		run.status = 'running';
+		(client.models.ComputeJob.list as ReturnType<typeof vi.fn>).mockResolvedValue({
+			data: [{
+				id: 'job-1', owner: 'user-1', name: 'Existing local job', runId: 'run-1',
+				providerId: 'provider-local', providerJobId: 'local-run-1', status: 'running',
+			}],
+		});
 		const plane = new McpControlPlane(client as never);
 
 		const result = await plane.pollTrainingStatus(principal, { runId: 'run-1' });
@@ -627,6 +652,25 @@ describe('MCP control-plane local daemon sync', () => {
 		expect(client.mutations.pollTrainingStatus).not.toHaveBeenCalled();
 		expect(client.models.TrainingRun.update).not.toHaveBeenCalled();
 		expect(result.action.status).toBe('running');
+	});
+
+	it('backfills a missing ComputeJob when polling a legacy local MCP run', async () => {
+		const { client, run } = localClient();
+		run.status = 'running';
+		run.configJson = JSON.stringify({ modelName: 'Legacy TabM', model_type: 'tabm' });
+		const plane = new McpControlPlane(client as never);
+
+		const result = await plane.pollTrainingStatus(principal, { runId: 'run-1' });
+
+		expect(client.mutations.pollTrainingStatus).not.toHaveBeenCalled();
+		expect(client.models.ComputeJob.create).toHaveBeenCalledWith(expect.objectContaining({
+			owner: 'user-1',
+			providerId: 'provider-local',
+			runId: 'run-1',
+			name: 'Legacy TabM',
+			status: 'running',
+		}));
+		expect(result.job).toMatchObject({ id: 'job-1', runId: 'run-1' });
 	});
 
 	it('lists claimable launches with the derived daemon request', async () => {
@@ -708,7 +752,10 @@ describe('MCP control-plane cancel/report race', () => {
 						data: { id: 'provider-local', owner: 'user-1', name: 'Mac', providerType: 'local', status: 'available' },
 					}),
 				},
-				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+				ComputeJob: {
+					list: vi.fn().mockResolvedValue({ data: [] }),
+					create: vi.fn().mockImplementation(async (input) => ({ data: { id: 'job-1', owner: 'user-1', ...input } })),
+				},
 			},
 		};
 		const plane = new McpControlPlane(client as never);

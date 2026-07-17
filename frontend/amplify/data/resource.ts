@@ -163,6 +163,9 @@ const schema = a.schema({
 
 	ComputeJob: a
 		.model({
+			// MCP launches run with Lambda IAM credentials, so the owner must be
+			// writable explicitly just like Pipeline, ModelBranch, and TrainingRun.
+			owner: a.string(),
 			providerId: a.id(),
 			runId: a.id(),
 			providerJobId: a.string(),
