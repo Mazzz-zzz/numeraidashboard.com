@@ -4,7 +4,11 @@
 # to point LightGBM at torch's bundled libomp. Not needed for the neural (MPS)
 # models below.
 lightgbm>=4.0.0
+# xgboost 3.x wheels require Python >=3.10. On an older interpreter (e.g. the
+# Xcode framework Python 3.9) pip skips it silently and xgboost runs fail with
+# "XGBoost not installed" — point the daemon at a 3.10+ python instead.
 xgboost==3.2.0
+catboost>=1.2.0
 numerapi==2.18.0
 # numerapi 2.18 imports pkg_resources, which setuptools removed in newer releases.
 setuptools<81
@@ -23,7 +27,7 @@ pytest>=7.0.0
 # --- Optional: neural / foundation models -----------------------------------
 # Only needed for the torch-based models (MLP, TabM, FT-Transformer,
 # ModernNCA) and the tabular foundation models (TabPFN, TabICL). The core
-# LightGBM/CatBoost path above works without these.
+# LightGBM/XGBoost/CatBoost path above works without these.
 #
 # On Apple Silicon these automatically use the Metal (MPS) GPU — no config
 # needed; see config/device.py. torch 2.4+ is recommended on macOS for the
