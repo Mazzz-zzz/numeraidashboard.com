@@ -13,6 +13,9 @@ import { mcpServer } from '../functions/mcp-server/resource';
 const schema = a.schema({
 	Pipeline: a
 		.model({
+			// Explicitly declare Amplify's owner field so the owner-scoped MCP
+			// resource can create workflow rows for its authenticated principal.
+			owner: a.string(),
 			name: a.string().required(),
 			description: a.string(),
 			status: a.enum(['draft', 'testing', 'live', 'retired']),
@@ -28,6 +31,7 @@ const schema = a.schema({
 
 	ModelBranch: a
 		.model({
+			owner: a.string(),
 			pipelineId: a.id().required(),
 			pipeline: a.belongsTo('Pipeline', 'pipelineId'),
 			parentBranchId: a.id(),
@@ -57,6 +61,7 @@ const schema = a.schema({
 
 	TrainingRun: a
 		.model({
+			owner: a.string(),
 			pipelineId: a.id().required(),
 			pipeline: a.belongsTo('Pipeline', 'pipelineId'),
 			branchId: a.id(),
@@ -76,6 +81,7 @@ const schema = a.schema({
 
 	ModelRegistryItem: a
 		.model({
+			owner: a.string(),
 			name: a.string().required(),
 				stage: a.enum(['draft', 'training', 'success', 'failed', 'testing', 'live', 'retired']),
 			pipelineId: a.id(),

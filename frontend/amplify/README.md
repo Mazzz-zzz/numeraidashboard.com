@@ -123,8 +123,11 @@ Configure an API-key client with the deployed URL and header:
 }
 ```
 
-Tools are `list_training_runs`, `list_compute_providers`, `launch_training_run`,
-`poll_training_status`, `cancel_run`, and `list_submissions`. The Lambda has IAM
+Tools are `list_models`, `launch_model_training`, `list_training_runs`,
+`list_compute_providers`, `launch_training_run`, `poll_training_status`,
+`cancel_run`, and `list_submissions`. `launch_model_training` turns any owned
+Builder model into a new run while preserving its complete `runConfig`; callers
+therefore do not need to create a `TrainingRun` in the browser first. The Lambda has IAM
 access to the Data API, but every read and write is checked again against the
 authenticated Cognito subject before provider credentials or workflow rows are
 used. `launch_training_run` accepts `compute_type: "cpu"` for remote Modal CPU
@@ -137,7 +140,9 @@ cancellations and pushes `TrainingActionResult` updates through
 `POST /daemon/report`, which persists them to the run and its compute job. MCP
 `poll_training_status` and the web UI then read that daemon-pushed state — see
 `ml/local/README.md` for enabling the sync and running the daemon under
-launchd.
+launchd. The local handoff converts every non-routing field in the Builder
+`runConfig` into a training hyperparameter, preserving model-specific settings
+for boosting, neural, and foundation model families.
 
 ## Modal Worker Deployment
 

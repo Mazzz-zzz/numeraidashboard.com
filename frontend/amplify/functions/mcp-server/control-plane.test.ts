@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { McpControlPlane, hashMcpApiKey, ownerSub } from './control-plane';
+import { McpControlPlane, hashMcpApiKey, localLaunchRequest, ownerSub } from './control-plane';
 
 const rawKey = `nd_mcp_${'A'.repeat(32)}`;
 
@@ -118,6 +118,134 @@ describe('MCP control-plane security', () => {
 		});
 		expect(providers[0]).not.toHaveProperty('apiKeyRef');
 		expect(providers[0]).not.toHaveProperty('credentialsJson');
+	});
+
+	it('lists owned Builder models with parsed runConfig and model type', async () => {
+		const list = vi.fn().mockResolvedValue({
+			data: [
+				{
+					id: 'model-tabm', owner: 'user-1::person@example.com', name: 'TabM K16', stage: 'draft',
+					lineageJson: JSON.stringify({ runConfig: { model_type: 'tabm', n_ensemble: 16 } }),
+				},
+				{ id: 'model-foreign', owner: 'user-10', name: 'Other', stage: 'draft' },
+			],
+		});
+		const plane = new McpControlPlane({ models: { ModelRegistryItem: { list } } } as never);
+
+		const models = await plane.listModels({ ownerSub: 'user-1' }, { stage: 'draft', limit: 10 });
+
+		expect(list).toHaveBeenCalledWith({
+			filter: {
+				and: [
+					{
+						or: [
+							{ owner: { eq: 'user-1' } },
+							{ owner: { beginsWith: 'user-1::' } },
+						],
+					},
+					{ stage: { eq: 'draft' } },
+				],
+			},
+			limit: 10,
+		});
+		expect(models).toEqual([
+			expect.objectContaining({
+				id: 'model-tabm', name: 'TabM K16', stage: 'draft', modelType: 'tabm',
+				runConfig: { model_type: 'tabm', n_ensemble: 16 },
+			}),
+		]);
+	});
+
+	it('creates and queues an owned TabM run from a Builder model on the local provider', async () => {
+		let model = {
+			id: 'model-tabm', owner: 'user-1', name: 'TabM K16', stage: 'draft',
+			changeSummary: 'TabM smoke test',
+			lineageJson: JSON.stringify({
+				template: 'challenger',
+				runConfig: {
+					mode: 'train', model_type: 'tabm', feature_set: 'small', neutralization_pct: 25,
+					n_ensemble: 16, hidden_dims: [256, 128], max_train_eras: 20,
+				},
+			}),
+		};
+		const provider = {
+			id: 'provider-local', owner: 'user-1', name: 'Mac Studio', providerType: 'local', status: 'available',
+		};
+		let createdRun: Record<string, unknown> | null = null;
+		const createRun = vi.fn().mockImplementation(async (input) => {
+			createdRun = { id: 'run-tabm', ...input };
+			return { data: createdRun };
+		});
+		const updateRun = vi.fn().mockImplementation(async (patch) => ({ data: { ...createdRun, ...patch } }));
+		const updateModel = vi.fn().mockImplementation(async (patch) => {
+			model = { ...model, ...patch };
+			return { data: model };
+		});
+		const client = {
+			models: {
+				ModelRegistryItem: {
+					get: vi.fn().mockResolvedValue({ data: model }),
+					update: updateModel,
+				},
+				Pipeline: {
+					get: vi.fn(),
+					create: vi.fn().mockResolvedValue({
+						data: { id: 'pipe-tabm', owner: 'user-1', name: 'TabM K16', status: 'testing' },
+					}),
+					update: vi.fn().mockResolvedValue({
+						data: { id: 'pipe-tabm', owner: 'user-1', name: 'TabM K16', status: 'testing', activeBranchId: 'branch-tabm' },
+					}),
+				},
+				ModelBranch: {
+					get: vi.fn(),
+					create: vi.fn().mockResolvedValue({
+						data: { id: 'branch-tabm', owner: 'user-1', pipelineId: 'pipe-tabm', status: 'queued' },
+					}),
+				},
+				TrainingRun: {
+					create: createRun,
+					get: vi.fn().mockImplementation(async () => ({ data: createdRun })),
+					update: updateRun,
+				},
+				ComputeProvider: { get: vi.fn().mockResolvedValue({ data: provider }) },
+				ComputeJob: { list: vi.fn().mockResolvedValue({ data: [] }) },
+			},
+			mutations: { startTraining: vi.fn() },
+		};
+		const plane = new McpControlPlane(client as never);
+
+		const result = await plane.launchModelTraining(
+			{ ownerSub: 'user-1' },
+			{ modelId: 'model-tabm', providerId: 'provider-local' }
+		);
+
+		expect(createRun).toHaveBeenCalledWith(expect.objectContaining({
+			owner: 'user-1', pipelineId: 'pipe-tabm', branchId: 'branch-tabm', providerId: 'provider-local',
+			modelTemplate: 'challenger', status: 'queued',
+			configJson: expect.objectContaining({
+				model_type: 'tabm', n_ensemble: 16, hidden_dims: [256, 128], max_train_eras: 20,
+				modelId: 'model-tabm', modelName: 'TabM K16',
+			}),
+		}));
+		expect(client.mutations.startTraining).not.toHaveBeenCalled();
+		expect(result.action.status).toBe('queued');
+		expect(result.run.providerId).toBe('provider-local');
+		expect(result.model).toMatchObject({ id: 'model-tabm', stage: 'training', runId: 'run-tabm', modelType: 'tabm' });
+		expect(localLaunchRequest('run-tabm', result.run.configJson)).toEqual({
+			runId: 'run-tabm',
+			model_type: 'tabm',
+			feature_set: 'small',
+			neutralization_pct: 25,
+			upload: false,
+			hyperparams: {
+				n_ensemble: 16,
+				hidden_dims: [256, 128],
+				max_train_eras: 20,
+			},
+		});
+		expect(updateModel).toHaveBeenCalledWith(expect.objectContaining({
+			id: 'model-tabm', pipelineId: 'pipe-tabm', branchId: 'branch-tabm', runId: 'run-tabm',
+		}));
 	});
 
 	it('launches through the shared mutation and persists owner-scoped run/job state', async () => {
@@ -240,6 +368,31 @@ describe('MCP control-plane security', () => {
 				},
 			},
 		});
+	});
+});
+
+describe('MCP local model configuration forwarding', () => {
+	it.each([
+		'lgbm', 'xgboost', 'catboost', 'mlp', 'ft_transformer', 'tabm', 'modern_nca', 'tabpfn', 'tabicl',
+	])('preserves %s model-specific Builder fields as local hyperparameters', (modelType) => {
+		const request = localLaunchRequest('run-1', {
+			mode: 'train',
+			model_type: modelType,
+			feature_set: 'small',
+			neutralization_pct: 25,
+			custom_model_knob: 7,
+			hyperparams: { explicit_knob: 9 },
+			modelId: 'model-1',
+			modelName: 'Model 1',
+			sweep: {},
+		});
+
+		expect(request).toMatchObject({
+			model_type: modelType,
+			hyperparams: { custom_model_knob: 7, explicit_knob: 9 },
+		});
+		expect(request.hyperparams).not.toHaveProperty('modelId');
+		expect(request.hyperparams).not.toHaveProperty('modelName');
 	});
 });
 
