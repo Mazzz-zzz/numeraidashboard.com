@@ -973,7 +973,7 @@ function trainingRunPatch(run: TrainingRun, provider: ComputeProvider, action: T
 		...(terminal ? { finishedAt: action.checkedAt } : {}),
 		logTail: action.logTail ?? action.error ?? null,
 		costUsd: action.costUsd ?? null,
-		metricsJson: action.metricsJson ?? null,
+		metricsJson: serializeAwsJson(action.metricsJson),
 		artifactUri: action.artifactUri ?? null,
 	};
 }
