@@ -8,7 +8,10 @@
 		let disposed = false;
 		let destroy: (() => void) | undefined;
 
-		void import('@scalar/api-reference').then(({ createApiReference }) => {
+		void Promise.all([
+			import('@scalar/api-reference'),
+			import('@scalar/api-reference/style.css')
+		]).then(([{ createApiReference }]) => {
 			if (disposed) return;
 			const reference = createApiReference(host, {
 				content: docsSpec,
