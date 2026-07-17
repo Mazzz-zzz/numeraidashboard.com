@@ -8,6 +8,11 @@ const modalSource = readFileSync(resolve(process.cwd(), 'amplify/functions/modal
 const appHtmlSource = readFileSync(resolve(process.cwd(), 'src/app.html'), 'utf8');
 const layoutSource = readFileSync(resolve(process.cwd(), 'src/routes/+layout.svelte'), 'utf8');
 const authSource = readFileSync(resolve(process.cwd(), 'src/lib/auth.ts'), 'utf8');
+const mcpHandlerSource = readFileSync(
+	resolve(process.cwd(), 'amplify/functions/mcp-server/handler.ts'),
+	'utf8'
+);
+const mcpToolDocsSource = readFileSync(resolve(process.cwd(), '../docs/mcp/tools.md'), 'utf8');
 
 function modelBlock(modelName: string): string {
 	const marker = `\t${modelName}: a`;
@@ -78,14 +83,29 @@ describe('credential schema hardening', () => {
 	});
 
 	it('protects the public MCP function URL with handler-level API-key auth', () => {
-		const handlerSource = readFileSync(
-			resolve(process.cwd(), 'amplify/functions/mcp-server/handler.ts'),
-			'utf8'
-		);
 		expect(backendSource).toContain('backend.mcpServer.resources.lambda.addFunctionUrl');
 		expect(backendSource).toContain('FunctionUrlAuthType.NONE');
-		expect(handlerSource).toContain("header(event.headers, 'x-api-key')");
-		expect(handlerSource).toContain('controlPlane.authenticate');
+		expect(mcpHandlerSource).toContain("header(event.headers, 'x-api-key')");
+		expect(mcpHandlerSource).toContain('controlPlane.authenticate');
+	});
+
+	it('documents every registered public MCP tool in the Scalar reference', () => {
+		for (const tool of [
+			'list_training_runs',
+			'list_models',
+			'create_model',
+			'update_model',
+			'delete_model',
+			'list_compute_providers',
+			'launch_training_run',
+			'launch_model_training',
+			'poll_training_status',
+			'cancel_run',
+			'list_submissions',
+		]) {
+			expect(mcpHandlerSource, tool).toContain(`'${tool}'`);
+			expect(mcpToolDocsSource, tool).toContain(`\`${tool}\``);
+		}
 	});
 
 	it('keeps operator Modal infrastructure out of source defaults', () => {
