@@ -127,8 +127,16 @@ Tools are `list_training_runs`, `launch_training_run`,
 `poll_training_status`, `cancel_run`, and `list_submissions`. The Lambda has IAM
 access to the Data API, but every read and write is checked again against the
 authenticated Cognito subject before provider credentials or workflow rows are
-used. Local Mac daemon logs remain snapshots from `ComputeJob.logTail`; the
-hosted Lambda does not connect directly to a workstation.
+used.
+
+The Lambda never connects to a workstation directly. Instead, runs on `local`
+compute providers stay `queued` until the machine's training daemon claims
+them: the daemon polls `POST /daemon/poll` (X-API-Key auth) for launches and
+cancellations and pushes `TrainingActionResult` updates through
+`POST /daemon/report`, which persists them to the run and its compute job. MCP
+`poll_training_status` and the web UI then read that daemon-pushed state — see
+`ml/local/README.md` for enabling the sync and running the daemon under
+launchd.
 
 ## Modal Worker Deployment
 

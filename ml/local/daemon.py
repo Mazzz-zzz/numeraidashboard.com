@@ -589,6 +589,16 @@ def _mac_chip_name() -> str | None:
         return None
 
 
+def _start_cloud_sync(daemon: "_Daemon") -> None:
+    """Bridge to the hosted dashboard when NUMERAI_DASHBOARD_MCP_URL/API_KEY are set."""
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from cloud_sync import maybe_start_cloud_sync
+        maybe_start_cloud_sync(daemon, JOBS_DIR)
+    except Exception:  # noqa: BLE001 - sync is optional; the daemon must still serve
+        traceback.print_exc()
+
+
 def _now_iso() -> str:
     return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
 
@@ -625,6 +635,7 @@ def _reconcile_orphans() -> None:
 def serve(host: str, port: int) -> None:
     JOBS_DIR.mkdir(parents=True, exist_ok=True)
     daemon = _Daemon()
+    _start_cloud_sync(daemon)
     server = ThreadingHTTPServer((host, port), _make_handler(daemon))
     print(f"[local-daemon] serving on http://{host}:{port} (device={_resolve_device()})")
     print(f"[local-daemon] jobs dir: {JOBS_DIR}")
