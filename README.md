@@ -91,6 +91,43 @@ Sensitive function entry points bind the request to the authenticated Cognito su
 Secret references must remain under that user's SSM namespace, and outbound provider URLs
 are validated before credentials are resolved.
 
+## Remote MCP Access
+
+The dashboard exposes a hosted MCP server so agents can manage training runs and
+submissions remotely:
+
+```
+https://lacdatamelsv55cio7jpnn5jxe0yvuvm.lambda-url.ap-southeast-2.on.aws/
+```
+
+Tools: `list_training_runs`, `launch_training_run`, `poll_training_status`,
+`cancel_run`, `list_submissions`. Every tool call is scoped to the authenticated
+user's records.
+
+Two authentication paths are supported:
+
+- **OAuth 2.1 (recommended for chat clients).** The endpoint is a pure OAuth
+  resource server per the MCP authorization spec: it publishes RFC 9728
+  protected-resource metadata and validates RS256 bearer JWTs (issuer, RFC 8707
+  audience, expiry). The authorization server is an Auth0 tenant
+  (`dev-vqnvfeioumdl2k4k.us.auth0.com`) that supports dynamic client
+  registration and PKCE, and federates login to the dashboard's Cognito user
+  pool — users sign in with their existing accounts. In claude.ai or ChatGPT
+  (developer mode), paste the endpoint URL into the custom-connector dialog
+  with no further settings; discovery, registration, and consent are automatic.
+- **API key (for header-capable clients).** Generate a key with
+  `npm run mcp:key` in `frontend/` and store its hash as an `ApiKey` row (see
+  `frontend/amplify/README.md`), then send it as an `X-API-Key` header. For
+  Claude Code: `claude mcp add --transport http numeraidashboard <url> --header
+  "X-API-Key: nd_mcp_..."`.
+
+OAuth activates when the `MCP_OAUTH_ISSUER` build environment variable is set
+on the Amplify app; without it the endpoint runs API-key-only. An Auth0
+post-login Action maps the federated Cognito subject into the
+`https://numeraidashboard.com/cognito_sub` access-token claim, which the
+server uses for owner scoping. Operational setup details live in
+`frontend/amplify/README.md`.
+
 ## Repository Layout
 
 | Path | Purpose |
@@ -212,7 +249,7 @@ Treat the relying-party domain as permanent once a production environment is liv
 - Fresh credentials are written to deterministic caller-owned parameter paths.
 - Provider endpoint validation runs before stored credentials are resolved.
 - Raw credentials are never persisted in GraphQL model rows.
-- MCP OAuth tokens are verified against the predefined or dynamically registered Cognito client that issued them; API keys are stored only as SHA-256 hashes. Every tool call is re-scoped to the authenticated Cognito owner.
+- MCP bearer tokens are verified against the Auth0 authorization server's JWKS with issuer and RFC 8707 audience binding; API keys are stored only as SHA-256 hashes. Every tool call is re-scoped to the authenticated Cognito owner.
 
 This is alpha software that can invoke paid compute and submit tournament predictions.
 Review IAM, provider configuration, budgets, and deployment logs before production use.
