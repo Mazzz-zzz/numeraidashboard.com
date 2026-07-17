@@ -1,6 +1,6 @@
 import { defineBackend } from '@aws-amplify/backend';
 import { Duration, Stack } from 'aws-cdk-lib';
-import { CfnUserPoolClient, CfnUserPoolDomain } from 'aws-cdk-lib/aws-cognito';
+import { CfnUserPoolDomain } from 'aws-cdk-lib/aws-cognito';
 import { PolicyStatement } from 'aws-cdk-lib/aws-iam';
 import { FunctionUrlAuthType, HttpMethod } from 'aws-cdk-lib/aws-lambda';
 import { auth } from './auth/resource';
@@ -48,55 +48,26 @@ const mcpFunctionUrl = backend.mcpServer.resources.lambda.addFunctionUrl({
 	},
 });
 
-const authStack = Stack.of(backend.auth.resources.userPool);
-const mcpOAuthDomainPrefix = 'numeraidashboard-mcp-dald5tic4n22y';
-new CfnUserPoolDomain(authStack, 'McpOAuthDomain', {
-	domain: mcpOAuthDomainPrefix,
+// The hosted-UI domain stays: Auth0's OIDC federation authenticates users
+// through the pool's /oauth2/* endpoints, which only exist on a domain.
+new CfnUserPoolDomain(Stack.of(backend.auth.resources.userPool), 'McpOAuthDomain', {
+	domain: 'numeraidashboard-mcp-dald5tic4n22y',
 	userPoolId: backend.auth.resources.userPool.userPoolId,
 });
-const mcpOAuthClient = new CfnUserPoolClient(authStack, 'McpOAuthClient', {
-	userPoolId: backend.auth.resources.userPool.userPoolId,
-	clientName: 'numeraidashboard-claude-mcp',
-	generateSecret: false,
-	allowedOAuthFlowsUserPoolClient: true,
-	allowedOAuthFlows: ['code'],
-	allowedOAuthScopes: ['openid'],
-	callbackUrLs: [
-		'https://claude.ai/api/mcp/auth_callback',
-		'https://chatgpt.com/connector_platform_oauth_redirect',
-	],
-	supportedIdentityProviders: ['COGNITO'],
-	preventUserExistenceErrors: 'ENABLED',
-	enableTokenRevocation: true,
-	accessTokenValidity: 60,
-	idTokenValidity: 60,
-	refreshTokenValidity: 30,
-	tokenValidityUnits: {
-		accessToken: 'minutes',
-		idToken: 'minutes',
-		refreshToken: 'days',
-	},
-});
-backend.mcpServer.resources.lambda.addEnvironment('MCP_OAUTH_CLIENT_ID', mcpOAuthClient.ref);
-backend.mcpServer.resources.lambda.addEnvironment(
-	'MCP_OAUTH_USER_POOL_ID',
-	backend.auth.resources.userPool.userPoolId
-);
 
-const cognitoIssuer = `https://cognito-idp.${authStack.region}.${authStack.urlSuffix}/${backend.auth.resources.userPool.userPoolId}`;
-const cognitoDomain = `https://${mcpOAuthDomainPrefix}.auth.${authStack.region}.amazoncognito.com`;
-backend.mcpServer.resources.lambda.addToRolePolicy(new PolicyStatement({
-	actions: ['cognito-idp:CreateUserPoolClient', 'cognito-idp:DescribeUserPoolClient'],
-	resources: [backend.auth.resources.userPool.userPoolArn],
-}));
+// The MCP endpoint is an OAuth resource server; the authorization server is an
+// external MCP-capable IdP (Auth0 tenant federating to the Cognito pool). Set
+// MCP_OAUTH_ISSUER as an Amplify build environment variable once the tenant
+// exists; until then the endpoint deploys API-key-only.
+const mcpOAuthIssuer = process.env.MCP_OAUTH_ISSUER?.trim();
+if (mcpOAuthIssuer) {
+	backend.mcpServer.resources.lambda.addEnvironment('MCP_OAUTH_ISSUER', mcpOAuthIssuer);
+}
 
 backend.addOutput({
 	custom: {
 		mcpUrl: mcpFunctionUrl.url,
-		mcpOAuthClientId: mcpOAuthClient.ref,
-		mcpOAuthAuthorizationServer: cognitoIssuer,
-		mcpOAuthDomain: cognitoDomain,
-		mcpOAuthRegistrationUrl: `${mcpFunctionUrl.url}oauth/register`,
+		...(mcpOAuthIssuer ? { mcpOAuthAuthorizationServer: mcpOAuthIssuer } : {}),
 	},
 });
 

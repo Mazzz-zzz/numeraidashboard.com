@@ -74,32 +74,31 @@ added inside these handlers.
 
 `functions/mcp-server/` exposes a stateless, JSON-response Streamable HTTP MCP
 server through an Amplify-managed Lambda Function URL. Deployment writes the
-endpoint and OAuth configuration to `amplify_outputs.json` as `custom.mcpUrl`,
-`custom.mcpOAuthClientId`, `custom.mcpOAuthAuthorizationServer`,
-`custom.mcpOAuthDomain`, and `custom.mcpOAuthRegistrationUrl`.
+endpoint to `amplify_outputs.json` as `custom.mcpUrl` (plus
+`custom.mcpOAuthAuthorizationServer` when OAuth is configured).
 
-Claude custom connectors use Cognito OAuth:
+The endpoint is a pure OAuth 2.1 resource server (MCP authorization spec): it
+publishes RFC 9728 protected-resource metadata at
+`/.well-known/oauth-protected-resource`, challenges unauthenticated requests
+with `WWW-Authenticate`, and validates bearer JWTs (issuer, audience = the
+function URL, expiry) against the authorization server's JWKS. Client
+registration (DCR/CIMD), PKCE, and consent are the authorization server's job —
+an Auth0 tenant that federates to the existing Cognito user pool, so users sign
+in with their dashboard accounts. An Auth0 post-login Action copies the
+federated Cognito subject into the
+`https://numeraidashboard.com/cognito_sub` claim, which the Lambda maps back to
+the same owner-scoped records used by the web app.
 
-1. Set the connector URL to `custom.mcpUrl`.
-2. In Advanced settings, set OAuth Client ID to `custom.mcpOAuthClientId`.
-3. Leave OAuth Client Secret blank.
-4. Connect and sign in through the Cognito consent flow.
+OAuth setup:
 
-ChatGPT custom connectors use dynamic client registration:
-
-1. Set the MCP server URL to `custom.mcpUrl`.
-2. Select DCR and set Registration URL to `custom.mcpOAuthRegistrationUrl`.
-3. Set Authorization Endpoint to `${custom.mcpOAuthDomain}/oauth2/authorize`.
-4. Set Token Endpoint to `${custom.mcpOAuthDomain}/oauth2/token`.
-5. Set scope to `openid` and token authentication to `none` (PKCE).
-6. Leave OAuth Client ID and Client Secret blank, then connect and sign in.
-
-The predefined client uses authorization code + S256 PKCE for Claude's hosted
-callback and ChatGPT's legacy callback. The registration endpoint creates
-secretless Cognito clients only for exact `https://chatgpt.com/connector/oauth/*`
-callbacks. The MCP endpoint publishes RFC 9728 protected-resource metadata,
-verifies Cognito access-token signatures and each signed client ID, and resolves
-the token subject back to the same owner-scoped records used by the web app.
+1. In Auth0: add the Cognito pool as an OIDC enterprise connection, register
+   the MCP function URL as an API (identifier = the exact URL), enable dynamic
+   client registration, and add the post-login Action for the owner claim.
+2. Set `MCP_OAUTH_ISSUER` (the Auth0 tenant URL, e.g.
+   `https://<tenant>.us.auth0.com/`) as an Amplify build environment variable
+   and redeploy. Without it the endpoint runs API-key-only.
+3. Connect from Claude or ChatGPT by pasting `custom.mcpUrl` — discovery,
+   registration, and PKCE are automatic; no client IDs or endpoints to copy.
 
 API keys remain available for clients that support static request headers.
 Generate one locally:
