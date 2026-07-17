@@ -148,6 +148,7 @@
 
 	let numeraiAccount = $state<NumeraiAccount | null>(null);
 	let providers = $state<ComputeProvider[]>([]);
+	let heartbeatNow = $state(Date.now());
 	let passkeys = $state<Passkey[]>([]);
 	let apiKeys = $state<ApiKey[]>([]);
 	let loading = $state(true);
@@ -187,6 +188,13 @@
 
 	onMount(() => {
 		if ($authState.user) void loadAll();
+		// Keep the local-daemon heartbeat live: its polls stamp verifiedAt on
+		// local providers, so refreshing surfaces online/offline within ~30s.
+		const heartbeatTimer = setInterval(() => {
+			heartbeatNow = Date.now();
+			if ($authState.user && !loading) void loadProviders();
+		}, 30_000);
+		return () => clearInterval(heartbeatTimer);
 	});
 
 	$effect(() => {
@@ -300,7 +308,10 @@
 
 		const providerYStart = -40;
 		const providerYStep = 100;
-		providers.forEach((p, i) => {
+		const cloudProviders = providers.filter((p) => !isLocalMachine(p));
+		const localMachines = providers.filter(isLocalMachine);
+
+		cloudProviders.forEach((p, i) => {
 			out.push({
 				id: `provider-${p.id}`,
 				type: 'provider',
@@ -318,10 +329,28 @@
 			out.push({
 				id: providerTemplateNodeId(template),
 				type: 'add',
-				position: { x: 720, y: providerYStart + (providers.length + i) * providerYStep },
+				position: { x: 720, y: providerYStart + (cloudProviders.length + i) * providerYStep },
 				data: {
 					label: template.nodeLabel,
 					logoSrc: template.logoSrc
+				}
+			});
+		});
+
+		// Local machines are not cloud providers: they hang off the MCP node,
+		// because their daemons reach the dashboard by polling the MCP endpoint.
+		localMachines.forEach((p, i) => {
+			out.push({
+				id: `provider-${p.id}`,
+				type: 'provider',
+				position: { x: 720, y: 340 + i * providerYStep },
+				data: {
+					label: p.name,
+					providerType: 'local' as ProviderType,
+					sub: daemonStatusLabel(p),
+					logoSrc: providerLogoFor(p),
+					linked: daemonOnline(p),
+					daemonOnline: daemonOnline(p)
 				}
 			});
 		});
@@ -359,6 +388,20 @@
 			}
 		];
 		providers.forEach((p) => {
+			if (isLocalMachine(p)) {
+				out.push({
+					id: `e-mcp-${p.id}`,
+					source: 'mcp',
+					sourceHandle: 'right',
+					target: `provider-${p.id}`,
+					type: 'smoothstep',
+					animated: daemonOnline(p),
+					style: daemonOnline(p)
+						? 'stroke: var(--green); stroke-width: 1.6;'
+						: 'stroke: var(--text-muted); stroke-width: 1.4; stroke-dasharray: 4 4;'
+				});
+				return;
+			}
 			out.push({
 				id: `e-hub-${p.id}`,
 				source: 'hub',
@@ -462,6 +505,29 @@
 		if (provider.lastVerifyError) return 'connection failed';
 		if (provider.verifiedAt) return `verified ${formatDate(provider.verifiedAt)}`;
 		return 'not verified';
+	}
+
+	// The local daemon's cloud-sync polls refresh verifiedAt at most once a
+	// minute; within 3 minutes counts as actively polling.
+	const DAEMON_ONLINE_WINDOW_MS = 3 * 60_000;
+
+	function isLocalMachine(provider: ComputeProvider): boolean {
+		return (provider.providerType as ProviderType | null) === 'local';
+	}
+
+	function daemonOnline(provider: ComputeProvider): boolean {
+		if (!provider.verifiedAt) return false;
+		const last = Date.parse(provider.verifiedAt);
+		return Number.isFinite(last) && heartbeatNow - last < DAEMON_ONLINE_WINDOW_MS;
+	}
+
+	function daemonStatusLabel(provider: ComputeProvider): string {
+		if (daemonOnline(provider)) {
+			const seconds = Math.max(0, Math.round((heartbeatNow - Date.parse(provider.verifiedAt!)) / 1000));
+			return `daemon polling · last sync ${seconds}s ago`;
+		}
+		if (provider.verifiedAt) return `daemon offline · last seen ${formatDate(provider.verifiedAt)}`;
+		return 'daemon never connected';
 	}
 
 	function providerCheckStateFor(provider: ComputeProvider): ProviderCheckState {
