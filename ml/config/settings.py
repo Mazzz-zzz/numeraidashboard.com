@@ -48,7 +48,7 @@ class MlSettings(BaseSettings):
     # Era stats: top N features by variance
     era_stats_top_n: int = 30
 
-    # Multi-target training — all 20-day horizon targets from v5.2 Faith II
+    # Multi-target training — all 20-day horizon targets from v5.2 Faith II (list unchanged in v5.3)
     multi_target_enabled: bool = True
     target_cols: List[str] = [
         "target",
