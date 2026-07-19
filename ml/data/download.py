@@ -2,7 +2,7 @@
 
 Uses anonymous NumerAPI (no credentials needed for data download).
 Downloads train, validation, live parquets, features.json metadata,
-meta model, and benchmark model predictions (v5.2).
+meta model, and benchmark model predictions (v5.3).
 """
 
 from __future__ import annotations
@@ -46,8 +46,11 @@ def _download_lock(dest: Path):
         finally:
             lock_file.close()
 
-# Numerai v5.2 dataset paths (Faith2 update, Dec 2025)
-DATASET_VERSION = "v5.2"
+# Numerai v5.3 dataset paths ("Quantum" update, Jul 2026: +807 features,
+# same targets). Cache filenames carry the version tag so bumping this
+# constant never silently reuses a previous version's files for the round.
+DATASET_VERSION = "v5.3"
+DATASET_VERSION_TAG = DATASET_VERSION.replace(".", "")
 DATASET_TRAIN = f"{DATASET_VERSION}/train.parquet"
 DATASET_VALIDATION = f"{DATASET_VERSION}/validation.parquet"
 DATASET_LIVE = f"{DATASET_VERSION}/live.parquet"
@@ -87,17 +90,20 @@ def _download_round_files(dest: Path) -> Path:
     napi = _get_napi()
     current_round = napi.get_current_round()
 
+    # The version tag sorts after untagged (older-version) files for the same
+    # round, so the glob-based loaders below always pick the newest version.
+    tag = f"_{DATASET_VERSION_TAG}"
     files = {
-        f"train_r{current_round}.parquet": DATASET_TRAIN,
-        f"validation_r{current_round}.parquet": DATASET_VALIDATION,
-        f"live_r{current_round}.parquet": DATASET_LIVE,
-        f"features_r{current_round}.json": DATASET_FEATURES,
-        f"meta_model_r{current_round}.parquet": DATASET_META_MODEL,
-        f"train_benchmarks_r{current_round}.parquet": DATASET_TRAIN_BENCHMARKS,
-        f"val_benchmarks_r{current_round}.parquet": DATASET_VAL_BENCHMARKS,
-        f"live_benchmarks_r{current_round}.parquet": DATASET_LIVE_BENCHMARKS,
-        f"val_example_preds_r{current_round}.parquet": DATASET_VAL_EXAMPLE_PREDS,
-        f"live_example_preds_r{current_round}.parquet": DATASET_LIVE_EXAMPLE_PREDS,
+        f"train_r{current_round}{tag}.parquet": DATASET_TRAIN,
+        f"validation_r{current_round}{tag}.parquet": DATASET_VALIDATION,
+        f"live_r{current_round}{tag}.parquet": DATASET_LIVE,
+        f"features_r{current_round}{tag}.json": DATASET_FEATURES,
+        f"meta_model_r{current_round}{tag}.parquet": DATASET_META_MODEL,
+        f"train_benchmarks_r{current_round}{tag}.parquet": DATASET_TRAIN_BENCHMARKS,
+        f"val_benchmarks_r{current_round}{tag}.parquet": DATASET_VAL_BENCHMARKS,
+        f"live_benchmarks_r{current_round}{tag}.parquet": DATASET_LIVE_BENCHMARKS,
+        f"val_example_preds_r{current_round}{tag}.parquet": DATASET_VAL_EXAMPLE_PREDS,
+        f"live_example_preds_r{current_round}{tag}.parquet": DATASET_LIVE_EXAMPLE_PREDS,
     }
 
     for local_name, remote_path in files.items():
@@ -222,7 +228,7 @@ def load_benchmark_models(
 ) -> Optional[pd.DataFrame]:
     """Load benchmark model predictions for validation data.
 
-    Contains 8 benchmark LightGBM models trained by Numerai on v5.2 data.
+    Contains benchmark LightGBM models trained by Numerai on v5.3 data.
     """
     data_dir = path or DATA_DIR
     files = sorted(data_dir.glob("val_benchmarks_r*.parquet"))

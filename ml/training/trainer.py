@@ -34,6 +34,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from config.settings import get_ml_settings
 from config.device import empty_cache
 from data.download import (
+    DATASET_VERSION,
     download_current_round,
     get_current_round,
     get_feature_set,
@@ -552,7 +553,8 @@ def run_training(
         if bm_df is not None:
             common_ids = val_common.index.intersection(bm_df.index)
             if len(common_ids) > 0:
-                bm_cols = [c for c in bm_df.columns if c.startswith("v52_lgbm_")]
+                bm_prefix = f"{DATASET_VERSION.replace('.', '')}_lgbm_"
+                bm_cols = [c for c in bm_df.columns if c.startswith(bm_prefix)]
                 for col in bm_cols:
                     val_common.loc[common_ids, col] = bm_df.loc[common_ids, col]
                 benchmark_cols = bm_cols
