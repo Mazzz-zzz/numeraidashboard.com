@@ -77,7 +77,16 @@ def _initial_max_parallel() -> int:
 # canonical ones defined by the local_runner; reuse them so behaviour matches.
 try:
     from sagemaker.local_runner import HP_TO_ENV, MODEL_KWARGS_KEYS
-except Exception:  # pragma: no cover - fallback if boto3/local_runner missing
+except Exception as _hp_import_error:  # pragma: no cover - fallback if boto3/local_runner missing
+    # This fallback silently dropped every GBM hyperparameter (learning_rate,
+    # num_leaves, min_data_in_leaf, early_stopping_rounds, ...) for months
+    # when boto3 was missing from the daemon interpreter. Warn loudly so a
+    # degraded environment is visible in the job logs.
+    print(
+        f"[local-daemon] WARNING: sagemaker.local_runner import failed ({_hp_import_error}); "
+        "hyperparams limited to num_rounds/max_train_eras. "
+        "Install ml/requirements.txt into this interpreter to restore full mapping."
+    )
     HP_TO_ENV = {"max_train_eras": "ML_MAX_TRAIN_ERAS", "num_rounds": "ML_DEFAULT_NUM_ROUNDS"}
     MODEL_KWARGS_KEYS = {
         "hidden_dims", "dropout", "noise_std", "weight_decay", "batch_size",
@@ -161,6 +170,12 @@ def run_job(job_dir: Path) -> int:
             os.environ[env_key] = json.dumps(val) if isinstance(val, (list, dict)) else str(val)
     model_kwargs = {k: v for k, v in hyperparams.items() if k in MODEL_KWARGS_KEYS}
 
+    # Target override: a single target or a list. Without this, runs that pin
+    # the payout target silently fall back to the full multi-target sweep.
+    target = hyperparams.get("target")
+    if not target and isinstance(hyperparams.get("targets"), list) and hyperparams["targets"]:
+        target = ",".join(str(t) for t in hyperparams["targets"])
+
     def progress_callback(info: dict) -> None:
         info = {**info, "compute": "local"}
         _write_json(job_dir / "progress.json", info)
@@ -196,6 +211,7 @@ def run_job(job_dir: Path) -> int:
                 model_type=model_type,
                 neutralization_pct=neutralization_pct,
                 model_kwargs=model_kwargs,
+                target=target,
             )
         elapsed = round(time.time() - start, 1)
         metrics = {**(metrics or {}), "compute": "local", "elapsedSeconds": elapsed}
