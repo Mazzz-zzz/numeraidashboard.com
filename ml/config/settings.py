@@ -39,6 +39,13 @@ class MlSettings(BaseSettings):
     # Feature set: "small" (42), "medium" (705), "all" (2376)
     feature_set: str = "medium"
 
+    # Feature dtype for data loading: "float32" (default) or "int8".
+    # Numerai features are 5-bin quantized (0, 0.25, 0.5, 0.75, 1), so int8
+    # (values 0-4) is lossless for tree models and cuts frame memory 4x —
+    # required to fit all-features x full-history on a 96GB machine. Neural
+    # trainers expect float32 inputs, so int8 is opt-in per run.
+    feature_dtype: str = "float32"
+
     # Feature engineering toggles
     enable_era_stats: bool = True
     enable_group_aggregates: bool = True
