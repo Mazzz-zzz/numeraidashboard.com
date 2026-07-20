@@ -126,10 +126,13 @@ class LightGBMModel(NumeraiModel):
         # one matrix at a time so only a single raw copy is ever alive.
         import gc
         skip_val = self.early_stopping_rounds >= self.n_estimators
+        # Binning parameters (max_bin etc.) must be present at construction —
+        # lgb.train cannot change them on an already-constructed Dataset.
         dtrain = lgb.Dataset(
             X_train.to_numpy(dtype=np.float32),
             label=y_train.to_numpy(dtype=np.float32),
             weight=w_train,
+            params=self.params,
             free_raw_data=True,
         )
         dtrain.construct()
@@ -142,6 +145,7 @@ class LightGBMModel(NumeraiModel):
                 label=y_val.to_numpy(dtype=np.float32),
                 weight=w_val,
                 reference=dtrain,
+                params=self.params,
                 free_raw_data=True,
             )
             dval.construct()
