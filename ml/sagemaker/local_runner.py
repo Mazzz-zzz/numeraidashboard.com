@@ -70,6 +70,7 @@ HP_TO_ENV = {
     "path_smooth": "ML_DEFAULT_PATH_SMOOTH",
     "max_bin": "ML_DEFAULT_MAX_BIN",
     "early_stopping_rounds": "ML_EARLY_STOPPING_ROUNDS",
+    "feature_dtype": "ML_FEATURE_DTYPE",
     "max_train_eras": "ML_MAX_TRAIN_ERAS",
     "neutralization_proportion": "ML_NEUTRALIZATION_PROPORTION",
     "multi_target_enabled": "ML_MULTI_TARGET_ENABLED",

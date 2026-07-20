@@ -157,6 +157,53 @@ def _downcast_floats(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _read_features_int8(
+    path: Path,
+    columns: List[str],
+    feature_cols: List[str],
+    chunk_size: int = 400,
+) -> pd.DataFrame:
+    """Load a Numerai parquet with feature columns as int8 (values 0-4).
+
+    Features are 5-bin quantized, so scaling by 4 and storing as int8 is
+    lossless for tree models and uses 1/4 the memory of float32. Columns are
+    read in chunks so the float intermediate never holds the whole matrix —
+    this is what lets all-features x full-history fit on a 96GB machine.
+    Non-feature columns (id index, era, targets) keep their normal dtypes.
+    """
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    other_cols = [c for c in columns if c not in feature_cols]
+    base = pd.read_parquet(path, columns=other_cols)
+
+    matrix = np.empty((len(base), len(feature_cols)), dtype=np.int8)
+    parquet_file = pq.ParquetFile(path)
+    for start in range(0, len(feature_cols), chunk_size):
+        cols = feature_cols[start:start + chunk_size]
+        # copy=True: arrow-backed frames can hand back read-only views.
+        block = parquet_file.read(columns=cols).to_pandas().to_numpy(dtype=np.float32, copy=True)
+        # Rare NaNs (e.g. sparse live rows) map to the median bin.
+        np.nan_to_num(block, copy=False, nan=0.5)
+        matrix[:, start:start + chunk_size] = np.rint(block * 4).astype(np.int8)
+        del block
+
+    features = pd.DataFrame(matrix, index=base.index, columns=feature_cols, copy=False)
+    return pd.concat([base, features], axis=1, copy=False)
+
+
+def _maybe_int8(path: Path, columns: Optional[List[str]]) -> Optional[pd.DataFrame]:
+    """Route through the int8 loader when ML_FEATURE_DTYPE=int8 requests it."""
+    if columns is None:
+        return None
+    if get_ml_settings().feature_dtype.lower() != "int8":
+        return None
+    feature_cols = [c for c in columns if c.startswith("feature_")]
+    if not feature_cols:
+        return None
+    return _read_features_int8(path, columns, feature_cols)
+
+
 def load_train_data(
     path: Optional[Path] = None,
     columns: Optional[List[str]] = None,
@@ -171,6 +218,9 @@ def load_train_data(
     files = sorted(data_dir.glob("train_r*.parquet"))
     if not files:
         raise FileNotFoundError(f"No training data found in {data_dir}")
+    int8_df = _maybe_int8(files[-1], columns)
+    if int8_df is not None:
+        return int8_df
     return _downcast_floats(pd.read_parquet(files[-1], columns=columns))
 
 
@@ -188,6 +238,9 @@ def load_validation_data(
     files = sorted(data_dir.glob("validation_r*.parquet"))
     if not files:
         raise FileNotFoundError(f"No validation data found in {data_dir}")
+    int8_df = _maybe_int8(files[-1], columns)
+    if int8_df is not None:
+        return int8_df
     return _downcast_floats(pd.read_parquet(files[-1], columns=columns))
 
 
@@ -205,6 +258,9 @@ def load_live_data(
     files = sorted(data_dir.glob("live_r*.parquet"))
     if not files:
         raise FileNotFoundError(f"No live data found in {data_dir}")
+    int8_df = _maybe_int8(files[-1], columns)
+    if int8_df is not None:
+        return int8_df
     return _downcast_floats(pd.read_parquet(files[-1], columns=columns))
 
 
