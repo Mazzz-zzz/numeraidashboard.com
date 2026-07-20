@@ -77,7 +77,16 @@ def _initial_max_parallel() -> int:
 # canonical ones defined by the local_runner; reuse them so behaviour matches.
 try:
     from sagemaker.local_runner import HP_TO_ENV, MODEL_KWARGS_KEYS
-except Exception:  # pragma: no cover - fallback if boto3/local_runner missing
+except Exception as _hp_import_error:  # pragma: no cover - fallback if boto3/local_runner missing
+    # This fallback silently dropped every GBM hyperparameter (learning_rate,
+    # num_leaves, min_data_in_leaf, early_stopping_rounds, ...) for months
+    # when boto3 was missing from the daemon interpreter. Warn loudly so a
+    # degraded environment is visible in the job logs.
+    print(
+        f"[local-daemon] WARNING: sagemaker.local_runner import failed ({_hp_import_error}); "
+        "hyperparams limited to num_rounds/max_train_eras. "
+        "Install ml/requirements.txt into this interpreter to restore full mapping."
+    )
     HP_TO_ENV = {"max_train_eras": "ML_MAX_TRAIN_ERAS", "num_rounds": "ML_DEFAULT_NUM_ROUNDS"}
     MODEL_KWARGS_KEYS = {
         "hidden_dims", "dropout", "noise_std", "weight_decay", "batch_size",
