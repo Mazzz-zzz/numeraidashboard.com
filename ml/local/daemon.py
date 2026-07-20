@@ -161,6 +161,12 @@ def run_job(job_dir: Path) -> int:
             os.environ[env_key] = json.dumps(val) if isinstance(val, (list, dict)) else str(val)
     model_kwargs = {k: v for k, v in hyperparams.items() if k in MODEL_KWARGS_KEYS}
 
+    # Target override: a single target or a list. Without this, runs that pin
+    # the payout target silently fall back to the full multi-target sweep.
+    target = hyperparams.get("target")
+    if not target and isinstance(hyperparams.get("targets"), list) and hyperparams["targets"]:
+        target = ",".join(str(t) for t in hyperparams["targets"])
+
     def progress_callback(info: dict) -> None:
         info = {**info, "compute": "local"}
         _write_json(job_dir / "progress.json", info)
@@ -196,6 +202,7 @@ def run_job(job_dir: Path) -> int:
                 model_type=model_type,
                 neutralization_pct=neutralization_pct,
                 model_kwargs=model_kwargs,
+                target=target,
             )
         elapsed = round(time.time() - start, 1)
         metrics = {**(metrics or {}), "compute": "local", "elapsedSeconds": elapsed}
