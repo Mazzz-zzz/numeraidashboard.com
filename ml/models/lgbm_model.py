@@ -120,20 +120,40 @@ class LightGBMModel(NumeraiModel):
             n_train_eras = len(train_eras)
             n_val_eras = len(val_eras)
 
-        dtrain = lgb.Dataset(X_train, label=y_train, weight=w_train, free_raw_data=True)
-        dval = lgb.Dataset(X_val, label=y_val, weight=w_val, reference=dtrain, free_raw_data=True)
-
-        # Construct datasets now so LightGBM bins the data and frees raw arrays
-        dtrain.construct()
-        dval.construct()
+        # LightGBM promotes pandas input to float64 while building a Dataset —
+        # up to 8x the frame size on wide int8 data (79GB on the full v5.3
+        # all-features train set). Convert to float32 numpy ourselves and bin
+        # one matrix at a time so only a single raw copy is ever alive.
         import gc
+        skip_val = self.early_stopping_rounds >= self.n_estimators
+        dtrain = lgb.Dataset(
+            X_train.to_numpy(dtype=np.float32),
+            label=y_train.to_numpy(dtype=np.float32),
+            weight=w_train,
+            free_raw_data=True,
+        )
+        dtrain.construct()
+        gc.collect()
+
+        dval = None
+        if not skip_val:
+            dval = lgb.Dataset(
+                X_val.to_numpy(dtype=np.float32),
+                label=y_val.to_numpy(dtype=np.float32),
+                weight=w_val,
+                reference=dtrain,
+                free_raw_data=True,
+            )
+            dval.construct()
         del X_train, y_train, X_val, y_val, w_train, w_val
         gc.collect()
 
-        callbacks = [
-            lgb.early_stopping(self.early_stopping_rounds),
-            lgb.log_evaluation(100),
-        ]
+        # With the patience >= the tree budget, early stopping can never fire;
+        # skip the val Dataset entirely — on full-history data it costs more
+        # memory than training itself.
+        callbacks = [lgb.log_evaluation(100)]
+        if dval is not None:
+            callbacks.insert(0, lgb.early_stopping(self.early_stopping_rounds))
 
         if epoch_callback:
             callbacks.append(self._make_epoch_callback(epoch_callback, every_n=50))
@@ -142,13 +162,13 @@ class LightGBMModel(NumeraiModel):
             self.params,
             dtrain,
             num_boost_round=self.n_estimators,
-            valid_sets=[dtrain, dval],
-            valid_names=["train", "val"],
+            valid_sets=[dtrain, dval] if dval is not None else [dtrain],
+            valid_names=["train", "val"] if dval is not None else ["train"],
             callbacks=callbacks,
         )
 
         return {
-            "best_iteration": self._model.best_iteration,
+            "best_iteration": self._model.best_iteration or self.n_estimators,
             "best_score": self._model.best_score,
             "train_eras": n_train_eras,
             "val_eras": n_val_eras,
@@ -159,7 +179,15 @@ class LightGBMModel(NumeraiModel):
         if self._model is None:
             raise RuntimeError("Model not trained or loaded")
 
-        preds = self._model.predict(df[feature_cols])
+        # Predict in row chunks: converting the whole frame to LightGBM's
+        # float64 input at once needs ~30x the int8 frame size on wide data.
+        X = df[feature_cols]
+        chunk = 200_000
+        parts = [
+            self._model.predict(X.iloc[start:start + chunk].to_numpy(dtype=np.float32))
+            for start in range(0, len(X), chunk)
+        ]
+        preds = np.concatenate(parts) if parts else np.empty(0)
         return pd.Series(preds, index=df.index, name="prediction")
 
     def save(self, path: Path) -> None:
