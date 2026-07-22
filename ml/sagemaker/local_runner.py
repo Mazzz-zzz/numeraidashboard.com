@@ -89,7 +89,7 @@ MODEL_KWARGS_KEYS = {
     "d_token", "n_blocks", "n_heads", "attn_dropout", "ff_dropout",
     "n_bags", "context_rows", "features_per_bag", "n_recent_eras",
     "n_estimators_per_bag", "norm_methods", "device", "offload_mode",
-    "use_amp", "use_fa3",
+    "use_amp", "use_fa3", "era_buckets",
 }
 
 

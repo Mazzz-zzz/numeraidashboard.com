@@ -30,6 +30,14 @@ Key fields: `num_rounds`, `learning_rate`, `max_depth`, `l2_leaf_reg`, `random_s
 
 [CatBoost documentation](https://catboost.ai/)
 
+### WarpGBM — `warpgbm`
+
+GPU-native gradient boosting from the Numerai community, running its binning, histogram, split-search, and inference loops as tensor operations. The local runner uses the `Mazzz-zzz/warpgbm@mps-support` fork, which adds a pure-PyTorch kernel fallback so it runs on Apple Silicon (MPS) and CPU as well as CUDA. Pre-binned int8 features (`feature_dtype: "int8"`) hit its fast path. `era_buckets` above 1 enables Directional Era-Splitting (invariant splits across era groups) — measured to reduce correlation on v5.3 data, so the default is pooled training.
+
+Key fields: `num_rounds`, `learning_rate`, `max_depth`, `min_data_in_leaf`, `feature_fraction`, `max_bin`, and `era_buckets`.
+
+[WarpGBM repository](https://github.com/jefferythewind/warpgbm)
+
 ## Neural tabular
 
 These PyTorch models automatically resolve CUDA, Apple MPS, or CPU on the local worker.

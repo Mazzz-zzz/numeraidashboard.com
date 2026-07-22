@@ -55,6 +55,11 @@ try:
 except ImportError:
     TabICLModel = None
 
+try:
+    from models.warpgbm_model import WarpGBMModel
+except ImportError:
+    WarpGBMModel = None
+
 
 def create_model(
     model_type: str = "lgbm",
@@ -109,6 +114,20 @@ def create_model(
             **kwargs,
         )
     
+    elif model_type == "warpgbm":
+        if WarpGBMModel is None:
+            raise RuntimeError(
+                "WarpGBM not installed. Install the MPS-capable fork with: "
+                'pip install "git+https://github.com/Mazzz-zzz/warpgbm.git@mps-support"'
+            )
+        return WarpGBMModel(
+            n_estimators=n_estimators,
+            learning_rate=learning_rate,
+            max_depth=max_depth,
+            feature_fraction=feature_fraction,
+            **kwargs,
+        )
+
     elif model_type == "xgboost":
         if XGBoostModel is None:
             raise RuntimeError(
