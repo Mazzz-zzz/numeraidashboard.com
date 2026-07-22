@@ -89,7 +89,8 @@ export const documentedModelTypes = [
 	'modern_nca',
 	'tabm',
 	'tabpfn',
-	'tabicl'
+	'tabicl',
+	'warpgbm'
 ] as const;
 
 const modelSchemas: Record<string, Schema> = {
@@ -210,6 +211,20 @@ const modelSchemas: Record<string, Schema> = {
 			use_amp: { description: 'Automatic mixed precision setting.', oneOf: [{ type: 'boolean' }, { type: 'string', const: 'auto' }], default: 'auto' },
 			use_fa3: { description: 'FlashAttention 3 setting.', oneOf: [{ type: 'boolean' }, { type: 'string', const: 'auto' }], default: 'auto' },
 			batch_size: integer('Inference batch size.', 16, 1)
+		}
+	),
+	WarpGBMConfig: modelConfig(
+		'warpgbm',
+		'WarpGBM',
+		'GPU-native gradient boosting with tensor-op kernels (CUDA upstream; Apple-Silicon MPS and CPU via the mps-support fork). Pre-binned int8 features hit its fast path; era_buckets above 1 enables Directional Era-Splitting. [WarpGBM repository](https://github.com/jefferythewind/warpgbm).',
+		{
+			num_rounds: integer('Boosting rounds (trees).', 2000, 1),
+			learning_rate: number('Step size for each boosting update.', 0.01, 0),
+			max_depth: integer('Maximum tree depth.', 6, 1),
+			min_data_in_leaf: integer('Minimum rows per leaf (maps to min_child_weight).', 10000, 1),
+			feature_fraction: number('Fraction of columns sampled per tree.', 0.5, 0, 1),
+			max_bin: integer('Histogram bins (2-127; 8 is lossless for 5-bin Numerai features).', 8, 2),
+			era_buckets: integer('Era groups for Directional Era-Splitting. 1 disables invariant splitting (recommended).', 1, 1)
 		}
 	)
 };

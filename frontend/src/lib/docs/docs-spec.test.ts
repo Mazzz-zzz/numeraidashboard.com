@@ -12,7 +12,8 @@ describe('Scalar documentation', () => {
 			'modern_nca',
 			'tabm',
 			'tabpfn',
-			'tabicl'
+			'tabicl',
+			'warpgbm'
 		]);
 	});
 
