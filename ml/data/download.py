@@ -134,15 +134,23 @@ def load_feature_metadata(path: Optional[Path] = None) -> dict:
 def get_feature_set(metadata: dict, set_name: str = "medium") -> List[str]:
     """Get feature column names for a named feature set.
 
-    Available sets in Numerai v5: small (42), medium (705), all (2376).
+    Available sets in Numerai v5: small, medium, all, plus release groups
+    (e.g. quantum, faith). A "+"-joined name (e.g. "quantum+small") returns
+    the deduplicated union of the named sets, preserving first-seen order.
     """
     feature_sets = metadata.get("feature_sets", {})
-    if set_name not in feature_sets:
+    names = [part.strip() for part in set_name.split("+") if part.strip()]
+    missing = [name for name in names if name not in feature_sets]
+    if not names or missing:
         available = list(feature_sets.keys())
         raise ValueError(
             f"Feature set '{set_name}' not found. Available: {available}"
         )
-    return feature_sets[set_name]
+    seen: dict = {}
+    for name in names:
+        for feature in feature_sets[name]:
+            seen.setdefault(feature, None)
+    return list(seen)
 
 
 def _downcast_floats(df: pd.DataFrame) -> pd.DataFrame:
